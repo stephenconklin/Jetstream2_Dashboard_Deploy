@@ -1,0 +1,9 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# Docker deploy drop-in slot: keep the folder, ignore whatever project
+# gets dropped into it.
+deploy/docker/app/*
+!deploy/docker/app/README.md
