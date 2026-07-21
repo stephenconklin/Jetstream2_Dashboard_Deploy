@@ -12,9 +12,11 @@
 #   apt.txt    - extra system packages (one per line) BASE_IMAGE doesn't provide
 #
 # Env vars:
-#   BASE_IMAGE - override the R base image (default: rocker/r-ver:4.4.1, bare
-#                R). Use rocker/geospatial for sf/terra/raster projects, or
-#                rocker/shiny-verse for tidyverse-heavy ones.
+#   BASE_IMAGE - override the R base image. If unset, it's auto-detected:
+#                rocker/geospatial:4.4.1 if the project's .R/.Rmd files use
+#                sf/terra/raster/stars/rgdal/rgeos, otherwise rocker/r-ver:4.4.1
+#                (bare R). Set this explicitly to skip detection, e.g. for
+#                rocker/shiny-verse on tidyverse-heavy projects.
 #   DATA_DIR   - host path (e.g. a mounted Jetstream2 storage volume) to
 #                bind-mount over the project's data/ directory at runtime
 #                instead of baking data/ into the image. The app must read
@@ -27,12 +29,37 @@ TOOLING_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="${1:-$TOOLING_DIR/app}"
 IMAGE_NAME="${2:-shiny-app}"
 CONTAINER_NAME="$IMAGE_NAME"
-BASE_IMAGE="${BASE_IMAGE:-rocker/r-ver:4.4.1}"
 DATA_DIR="${DATA_DIR:-}"
 
 if [[ ! -f "$PROJECT_DIR/app.R" && ! -f "$PROJECT_DIR/server.R" ]]; then
   echo "No app.R or server.R found in $PROJECT_DIR — nothing to deploy." >&2
   exit 1
+fi
+
+# Auto-detect a geospatial base image from the project's code, unless the
+# caller already set BASE_IMAGE explicitly. This is a best-effort heuristic
+# (regex over library()/require()/:: usage), not a guarantee — set BASE_IMAGE
+# yourself if a project needs something this doesn't catch.
+GEOSPATIAL_PACKAGES=(sf terra raster stars rgdal rgeos)
+
+uses_geospatial_packages() {
+  local pkg
+  for pkg in "${GEOSPATIAL_PACKAGES[@]}"; do
+    if grep -rlE "(library|require)\\(['\"]?${pkg}['\"]?\\)|\\b${pkg}::" \
+         --include='*.R' --include='*.Rmd' "$PROJECT_DIR" >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+if [[ -z "${BASE_IMAGE+set}" ]]; then
+  if uses_geospatial_packages; then
+    BASE_IMAGE="rocker/geospatial:4.4.1"
+    echo "Detected geospatial packages (sf/terra/raster/...) — using BASE_IMAGE=$BASE_IMAGE" >&2
+  else
+    BASE_IMAGE="rocker/r-ver:4.4.1"
+  fi
 fi
 
 if [[ -n "$DATA_DIR" && ! -d "$DATA_DIR" ]]; then
