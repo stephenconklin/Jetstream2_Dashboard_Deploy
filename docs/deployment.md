@@ -90,9 +90,12 @@ Jetstream2's standard Ubuntu image ships with Docker preinstalled, so no install
 - **Extra system libraries are opt-in.** An optional `apt.txt` in the project directory (one package per line) covers anything beyond the baseline and `BASE_IMAGE` — e.g. `default-jdk` for `rJava`, `imagemagick` for `magick`. Empty or absent is fine.
 - **Entry point needs no configuration.** Shiny Server serves whatever directory it's pointed at using the same convention `shiny::runApp()` does — `app.R`, or a `ui.R`/`server.R` pair — so no project-specific config is needed there either.
 - **The project is baked into the image** at build time (not bind-mounted), so the resulting image is self-contained and versioned.
+- **Data can optionally be bind-mounted instead of baked in.** By default, a project's `data/` directory is baked into the image like the rest of the code. Setting `DATA_DIR=/path/to/data ./build_and_run.sh` instead bind-mounts that host path (e.g. a Jetstream2 storage volume) to `/srv/shiny-server/data` at runtime, so updating the data only needs a `docker restart`, not a rebuild. Requires the app to read data via a `data/`-relative path.
 - Container runs with `--restart unless-stopped` and `-p 80:3838` — Docker's port mapping handles the privileged bind, so no Nginx is needed in this workflow.
 
 **To update the app after a code change:** re-run `build_and_run.sh`. It rebuilds the image (Docker layer caching keeps this fast unless the system/package layers changed) and replaces the running container.
+
+**To update data when using `DATA_DIR`:** just update the files at that host path and `docker restart <container-name>` — no rebuild needed, since the data is bind-mounted rather than baked in.
 
 **Known limitation:** same as bare-metal — no TLS, since there's no domain to challenge against yet. Also, dependency auto-detection is static analysis — it won't catch packages loaded dynamically (e.g. via a variable passed to `library()`), so an unusual project may occasionally need an explicit `renv.lock` instead of relying on the scan.
 
