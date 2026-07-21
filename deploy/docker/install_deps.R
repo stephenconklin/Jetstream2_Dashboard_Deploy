@@ -10,12 +10,15 @@ project_dir <- if (length(args) >= 1) args[[1]] else "."
 
 # Many R base images (rocker/geospatial included) point the default "CRAN"
 # repo at a Posit Package Manager snapshot frozen on the date the image was
-# built. renv::restore() resolves a lockfile's "CRAN" packages against
-# whatever "CRAN" currently means, so a pinned version released *after* that
-# frozen snapshot date would otherwise 404 forever, no matter how long you
-# wait. Point at the real, rolling CRAN mirror so any pinned version can
-# actually be fetched regardless of when it was released relative to the
-# base image's build date.
+# built. A renv.lock itself also embeds the exact repository URLs active at
+# snapshot() time (its top-level "R"$"Repositories" section), and
+# renv::restore() prefers that recorded URL over the session's options("repos")
+# — so overriding options(repos = ...) alone has no effect on restore. A
+# pinned package version released *after* whichever snapshot date is baked
+# into either the image or the lockfile would otherwise 404 forever, no
+# matter how long you wait. renv.config.repos.override forces renv to ignore
+# both and use this rolling mirror for every repo lookup during restore().
+options(renv.config.repos.override = "https://cloud.r-project.org")
 options(repos = c(CRAN = "https://cloud.r-project.org"))
 
 if (!requireNamespace("renv", quietly = TRUE)) {
