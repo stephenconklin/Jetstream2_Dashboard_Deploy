@@ -5,7 +5,7 @@
 library(shiny)
 
 ui <- fluidPage(
-  titlePanel("Jetstream2 RShiny Deploy — self-test app"),
+  titlePanel("Jetstream2 Dashboard Deploy — R Shiny self-test app"),
   sidebarLayout(
     sidebarPanel(
       sliderInput("bins", "Number of bins:", min = 5, max = 30, value = 15)

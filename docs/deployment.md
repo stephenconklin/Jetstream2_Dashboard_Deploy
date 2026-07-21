@@ -1,124 +1,93 @@
-# Deploying an R Shiny app to Jetstream2
+# Deploying a dashboard/app to Jetstream2
 
-Two workflows for running an R Shiny app on a Jetstream2 instance. Both assume **one instance per project/researcher** — no multi-tenant package conflicts to manage, and the app is reachable directly on port 80 at the instance's fixed IP.
-
-| | Bare-metal | Docker |
-|---|---|---|
-| Script | [`deploy/provision_baremetal.sh`](../deploy/provision_baremetal.sh) | [`deploy/docker/build_and_run.sh`](../deploy/docker/build_and_run.sh) |
-| Port 80 handled by | Nginx reverse-proxying to Shiny Server (3838) | Docker's `-p 80:3838` port mapping |
-| Update the app | Re-run the provisioning script (re-clones the app repo) | Re-run `build_and_run.sh` (rebuilds the image) |
-| Rebuild environment from scratch | Full re-provision | `docker build` — base image layers are cached |
-| Best for | Researchers who want to `git pull`/edit the app directly on the instance | Reproducible, versioned deploys; easiest to redo identically later |
-
-Pick Docker by default unless there's a specific reason to want the app editable in place on the instance (e.g. active development directly on the server).
+A single Docker-based workflow for running an app on a Jetstream2 instance, generic across **R Shiny**, **Plotly Dash**, **Python Shiny**, and **Streamlit**. Assumes **one instance per project/researcher** — no multi-tenant package conflicts to manage, and the app is reachable directly on port 80 at the instance's fixed IP.
 
 ---
 
-## Prerequisites (both workflows)
+## Prerequisites
 
 - Jetstream2 instance running **Ubuntu 22.04 (jammy)**, launched via Exosphere.
 - A fixed/floating IP assigned to the instance.
 - Security group allowing inbound **80/tcp** and **22/tcp**.
 - SSH access as a sudo-capable user (Jetstream2's default `exouser`).
+- Docker preinstalled (Jetstream2's standard Ubuntu image ships with it) — no install step needed. No `sudo`/root needed for anything in this workflow, assuming `exouser` is in the `docker` group, which is Jetstream2's default.
 
 ---
 
-## Workflow 1: Bare-metal (Shiny Server + Nginx)
+## Deploying your app
 
-1. SSH into the instance.
-2. Clone this repo (or copy just the `deploy/` directory) onto the instance.
-3. Run the provisioning script, pointing it at the app repo to deploy:
+1. Clone this repo into your home directory on the instance:
 
    ```bash
-   sudo APP_REPO_URL=https://github.com/YOUR_ORG/YOUR_APP.git \
-        APP_BRANCH=main \
-        ./deploy/provision_baremetal.sh
+   git clone https://github.com/stephenconklin/Jetstream2-Dashboard-Deploy.git
+   cd Jetstream2-Dashboard-Deploy
    ```
 
-4. Visit `http://<instance-fixed-ip>/` in a browser.
+2. Get your project into [`deploy/app/`](../deploy/app/README.md) — this folder is gitignored (it's a drop-in slot, not something that ships in git), so a fresh clone always starts with it empty.
 
-**What it sets up:**
-- R from the CRAN apt repo (not Ubuntu's default, which lags releases behind).
-- GDAL/GEOS/PROJ/UDUNITS from `ubuntugis-unstable` — these are what actually cause `sf`/`terra`/`raster` install failures on a stock Ubuntu image, so pinning current versions here avoids that class of problem for spatial apps entirely.
-- Shiny Server (systemd service, port 3838) serving the single app at `/srv/shiny-server`.
-- Nginx reverse-proxying port 80 → 3838. (Shiny/R never binds a privileged port directly — running that process as root would be a real exposure.)
-- `ufw` allowing 80/tcp and SSH, as defense in depth alongside the Jetstream2 security group.
-
-**To update the app after a code change:** re-run the script. It does a full `rm -rf` + re-clone of `/srv/shiny-server`, not a `git pull` — simple and fine for a single-researcher instance, but note it's a full wipe each time, not an incremental sync.
-
-**Known limitation:** no TLS. Let's Encrypt's standard challenge needs a resolvable hostname, not just a fixed IP — if a domain gets pointed at the instance later, add certbot + an HTTPS server block to the Nginx config.
-
-**R packages:** installed the same way as the Docker workflow — after cloning the app, [`install_deps.R`](../deploy/docker/install_deps.R) (shared between both workflows) restores its `renv.lock` if present, or scans the app's code for `library()`/`require()` calls and installs whatever's missing.
-
----
-
-## Workflow 2: Docker
-
-Jetstream2's standard Ubuntu image ships with Docker preinstalled, so no install step is needed. This workflow is **generic** — it works for any R Shiny project, not tied to one particular app.
-
-1. Clone this repo into your home directory on the instance (no `sudo`/root needed for anything in this workflow, assuming `exouser` is in the `docker` group, which is Jetstream2's default):
-
-   ```bash
-   git clone https://github.com/stephenconklin/Jetstream2_RShiny_Deploy.git
-   cd Jetstream2_RShiny_Deploy
-   ```
-
-2. Get the Shiny project into [`deploy/docker/app/`](../deploy/docker/app/README.md) — this folder is gitignored (it's a drop-in slot, not something that ships in git), so a fresh clone always starts with it empty.
-
-   - **To smoke-test the tooling itself** before pointing it at a real project, copy in the bundled example:
+   - **To smoke-test the tooling itself** before pointing it at a real project, copy in one of the bundled examples (one per framework):
 
      ```bash
-     cp -r examples/hello-world/* deploy/docker/app/
+     cp -r examples/r-shiny-hello-world/* deploy/app/
+     # or examples/dash-hello-world, examples/python-shiny-hello-world, examples/streamlit-hello-world
      ```
 
-   - **To deploy a real project**, either copy/`git clone` it into `deploy/docker/app/`, or skip this step and pass its path directly to `build_and_run.sh` in the next step (it copies the project into a temporary build context on its own, without needing anything placed under `deploy/docker/app/`).
+   - **To deploy a real project**, either copy/`git clone` it into `deploy/app/`, or skip this step and pass its path directly to `build_and_run.sh` in the next step (it copies the project into a temporary build context on its own, without needing anything placed under `deploy/app/`).
 
 3. From the repo root:
 
    ```bash
-   ./deploy/docker/build_and_run.sh                         # deploys deploy/docker/app/
+   ./deploy/build_and_run.sh                         # deploys deploy/app/
    # or
-   ./deploy/docker/build_and_run.sh /path/to/other/project  # deploys a project elsewhere
+   ./deploy/build_and_run.sh /path/to/other/project  # deploys a project elsewhere
    ```
 
-   If you're triaging many candidate projects and just want to know what the script would do to each — detected entry point, base image, whether `renv.lock`/`data/`/`apt.txt` are present — without actually building anything, add `--dry-run`:
+   If you're triaging many candidate projects and just want to know what the script would do to each — detected framework, entry point, base image, whether the dependency file/`data/`/`apt.txt` are present — without actually building anything, add `--dry-run`:
 
    ```bash
-   ./deploy/docker/build_and_run.sh --dry-run /path/to/project
+   ./deploy/build_and_run.sh --dry-run /path/to/project
    ```
 
 4. Visit `http://<instance-fixed-ip>/` in a browser.
 
 **How the genericization works:**
-- **Base image is auto-detected, with a swappable override.** `build_and_run.sh` scans the project's `.R`/`.Rmd` files for `library()`/`require()`/`::` usage of `sf`, `terra`, `raster`, `stars`, `rgdal`, or `rgeos`, and picks `rocker/geospatial:4.4.1` automatically when it finds one — otherwise it falls back to `rocker/r-ver:4.4.1` (bare R). This is a best-effort heuristic (a regex over source files, not a real dependency graph), so set `BASE_IMAGE` explicitly to skip detection — e.g. `BASE_IMAGE=rocker/shiny-verse ./build_and_run.sh` for a tidyverse-heavy project the scan wouldn't otherwise flag, or to force a specific geospatial image version.
-  - **Version-drift warning for geospatial projects without a lockfile.** If the same scan detects geospatial packages but the project has no `renv.lock`, `build_and_run.sh` prints a warning before building: without a lockfile, `install_deps.R` always installs whatever's newest on CRAN, and a new release of `sf`/`terra`/etc. can require a newer GDAL/GEOS/PROJ than the fixed base image ships — breaking a build that worked previously, with no code change on your end. This can't be predicted reliably ahead of time (only actually compiling proves it), so the warning is just a nudge, not a guarantee. See "Pinning R package versions to avoid CRAN version drift" below.
-- **A baseline of common compile-time headers is always installed** (`libuv`, `zlib`, `openssl`, `libcurl`, `libxml2`, `fontconfig`/`freetype`/`harfbuzz`/`fribidi`, `png`/`jpeg`). These aren't optional because `shiny` itself won't install without them — its dependency `httpuv` needs `libuv`/`zlib` to compile, and common plotting packages need the font-rendering libs. Anything beyond this baseline (GDAL, Java, ImageMagick, …) is either covered by a `BASE_IMAGE` override or the project's `apt.txt`.
-- **R packages are auto-detected, not hardcoded.** [`install_deps.R`](../deploy/docker/install_deps.R) runs at build time: if the project ships an `renv.lock`, it restores those exact versions; otherwise it statically scans the project's `.R`/`.Rmd` files for `library()`/`require()` calls (via `renv::dependencies()`, which doesn't require the project to have ever used `renv`) and installs whatever the base image doesn't already provide. If any required package is still missing afterward, the script fails loudly — `install.packages()`/`renv::restore()` otherwise print an error but exit 0, which would let `docker build` report success on a broken image.
-- **Repos always resolve against live CRAN, not a frozen snapshot.** Many R base images (`rocker/geospatial` included) point the default `"CRAN"` repo at a Posit Package Manager snapshot frozen on the date the image was built — and a `renv.lock` itself also embeds the exact repository URLs active when it was written (its `"R"$"Repositories"` section), which `renv::restore()` prefers over the session's `options("repos")`. `install_deps.R` sets `options(renv.config.repos.override = "https://cloud.r-project.org")` before installing anything, which forces `renv::restore()` to ignore both frozen sources and resolve every package against the real, rolling CRAN mirror instead. Without this, a `renv.lock`-pinned package version released after either snapshot date would 404 indefinitely — plain `options(repos = ...)` alone does *not* fix this, since `renv::restore()` doesn't consult it when the lockfile has its own recorded repository URLs.
-- **Extra system libraries are opt-in.** An optional `apt.txt` in the project directory (one package per line) covers anything beyond the baseline and `BASE_IMAGE` — e.g. `default-jdk` for `rJava`, `imagemagick` for `magick`. Empty or absent is fine.
-- **Entry point needs no configuration, and is detected beyond the basic convention.** Shiny Server serves whatever directory it's pointed at using the same convention `shiny::runApp()` does — `app.R`, or a `ui.R`/`server.R` pair — so no project-specific config is needed there either. `build_and_run.sh` also recognizes an R Markdown Shiny document (`runtime: shiny` in its YAML front matter, e.g. a flexdashboard), which Shiny Server can serve directly. A golem-packaged app that only ships `inst/app.R` (no root-level shim) gets a specific error telling you to add one, rather than a generic "nothing found" — Shiny Server needs an entry point at the project root, not nested under `inst/`.
+
+- **Framework is auto-detected from the project's code, with a `FRAMEWORK=` override.** `build_and_run.sh` greps a project's `.R`/`.Rmd`/`.py` files for framework-specific signals — see [`deploy/lib/detect_framework.sh`](../deploy/lib/detect_framework.sh) for the exact patterns. This is content-based, not filename-based: `app.py` alone is ambiguous across Dash/Python Shiny/Streamlit (and plain Flask), so detection always inspects imports (`import dash`, `from shiny import App`, `import streamlit`), with Streamlit's `streamlit_app.py` filename only as a secondary signal. If detection finds conflicting signals in different files, or nothing at all, it fails loudly with an actionable message rather than guessing — set `FRAMEWORK=r-shiny|dash|python-shiny|streamlit` to force a choice and bypass detection entirely.
+- **One Dockerfile per framework** (`deploy/docker/Dockerfile.r-shiny`, `.dash`, `.python-shiny`, `.streamlit`), selected via `docker build -f` once the framework is known. Each keeps its own build steps simple rather than one Dockerfile branching internally across 4 different ecosystems.
+- **Base image is auto-detected for R Shiny, with a swappable override; fixed for the 3 Python frameworks.** For R Shiny, `build_and_run.sh` scans the project's `.R`/`.Rmd` files for `library()`/`require()`/`::` usage of `sf`, `terra`, `raster`, `stars`, `rgdal`, or `rgeos`, and picks `rocker/geospatial:4.4.1` automatically when it finds one — otherwise it falls back to `rocker/r-ver:4.4.1` (bare R). This is a best-effort heuristic (a regex over source files, not a real dependency graph), so set `BASE_IMAGE` explicitly to skip detection — e.g. `BASE_IMAGE=rocker/shiny-verse ./build_and_run.sh` for a tidyverse-heavy project the scan wouldn't otherwise flag. Dash/Python Shiny/Streamlit default to `python:3.11-slim`, also overridable via `BASE_IMAGE`.
+  - **Version-drift warning for R geospatial projects without a lockfile.** If the same scan detects geospatial R packages but the project has no `renv.lock`, `build_and_run.sh` prints a warning before building: without a lockfile, `install_deps.R` always installs whatever's newest on CRAN, and a new release of `sf`/`terra`/etc. can require a newer GDAL/GEOS/PROJ than the fixed base image ships — breaking a build that worked previously, with no code change on your end. This can't be predicted reliably ahead of time (only actually compiling proves it), so the warning is just a nudge, not a guarantee. See "Pinning R package versions to avoid CRAN version drift" below.
+- **A baseline of common compile-time headers is always installed** in `Dockerfile.r-shiny` (`libuv`, `zlib`, `openssl`, `libcurl`, `libxml2`, `fontconfig`/`freetype`/`harfbuzz`/`fribidi`, `png`/`jpeg`). These aren't optional because `shiny` itself won't install without them — its dependency `httpuv` needs `libuv`/`zlib` to compile, and common plotting packages need the font-rendering libs. Anything beyond this baseline (GDAL, Java, ImageMagick, …) is either covered by a `BASE_IMAGE` override or the project's `apt.txt`. The 3 Python Dockerfiles rely on `python:3.11-slim` + pip wheels for the common case, with `apt.txt` as the same escape hatch.
+- **R packages are auto-detected, not hardcoded; Python's dependency file is required, not optional.** [`install_deps.R`](../deploy/docker/install_deps.R) (R Shiny only) runs at build time: if the project ships an `renv.lock`, it restores those exact versions; otherwise it statically scans the project's `.R`/`.Rmd` files for `library()`/`require()` calls (via `renv::dependencies()`, which doesn't require the project to have ever used `renv`) and installs whatever the base image doesn't already provide. If any required package is still missing afterward, the script fails loudly — `install.packages()`/`renv::restore()` otherwise print an error but exit 0, which would let `docker build` report success on a broken image. **Python has no equivalent fallback**: there's no reliable way to infer a PyPI package name from an import statement (e.g. `import cv2` comes from the package `opencv-python`, not `cv2`), so `requirements.txt` is required for Dash/Python Shiny/Streamlit — `build_and_run.sh` fails with an actionable message (and the reasoning above) if it's missing, rather than attempting any auto-scan.
+- **Repos always resolve against live CRAN, not a frozen snapshot** (R Shiny only). Many R base images (`rocker/geospatial` included) point the default `"CRAN"` repo at a Posit Package Manager snapshot frozen on the date the image was built — and a `renv.lock` itself also embeds the exact repository URLs active when it was written (its `"R"$"Repositories"` section), which `renv::restore()` prefers over the session's `options("repos")`. `install_deps.R` sets `options(renv.config.repos.override = "https://cloud.r-project.org")` before installing anything, which forces `renv::restore()` to ignore both frozen sources and resolve every package against the real, rolling CRAN mirror instead. Without this, a `renv.lock`-pinned package version released after either snapshot date would 404 indefinitely — plain `options(repos = ...)` alone does *not* fix this, since `renv::restore()` doesn't consult it when the lockfile has its own recorded repository URLs.
+- **Extra system libraries are opt-in, for every framework.** An optional `apt.txt` in the project directory (one package per line) covers anything beyond the baseline and `BASE_IMAGE` — e.g. `default-jdk` for `rJava`, `libgdal-dev` for a Python `geopandas` dependency. Empty or absent is fine.
+- **Entry point convention is each framework's own, detected beyond the basic case.** R Shiny: `app.R`, or a `ui.R`/`server.R` pair, or an R Markdown Shiny document (`runtime: shiny` in its YAML front matter, e.g. a flexdashboard) — a golem-packaged app that only ships `inst/app.R` gets a specific error telling you to add a root-level shim, rather than a generic "nothing found." Dash/Python Shiny: `app.py`. Streamlit: `streamlit_app.py` (or `app.py`). No per-project server config is needed since the tool always serves a single app at `/`.
 - **The project's code is baked into the image** at build time (not bind-mounted), so the resulting image is self-contained and versioned.
-- **Data is never baked into the image.** If the project has a `data/` directory, `build_and_run.sh` bind-mounts a host path over it at `/srv/shiny-server/data` at runtime instead of copying its contents into the image — set `DATA_DIR=/path/to/data ./build_and_run.sh` to specify it non-interactively, or leave `DATA_DIR` unset and the script will prompt for the path (with a nudge toward the typical Jetstream2 storage volume location, `/media/volume/<volume-name>/...`). Either way, updating the data only needs a `docker restart`, not a rebuild. If the project has no `data/` directory, nothing is prompted or mounted.
-  - **What this requires of the app's code:** the data folder must be named `data` at the project's top level, and R code must reference files under it with a project-root-relative path — e.g. `read_csv("data/wq_baltimore.csv")`, not an absolute path or one that assumes a different working directory. This works because Shiny Server's `app_dir` is `/srv/shiny-server` (see `shiny-server.conf`), which is also where the project is copied to (`COPY app/ /srv/shiny-server/`) and where `DATA_DIR` gets bind-mounted (as `/srv/shiny-server/data`) — so a `data/`-relative path in the app's code resolves to the mount either way. No env var or Shiny-side awareness of the mount is needed. A project that reads data via an absolute path or a non-standard folder name won't pick up the bind-mounted data.
-- **Network flakiness is retried, not treated as fatal.** Deploying many different projects means hitting more transient apt/CRAN mirror hiccups over time, so several layers retry before giving up: `apt_retry.sh` wraps every `apt-get install` in the Dockerfile with up to 3 attempts (10s backoff), `install_deps.R` retries `renv::restore()`/`install.packages()` up to 3 times (checking what's actually still missing afterward, since neither throws an R error on partial failure), and `build_and_run.sh` itself retries a failed `docker build` up to 3 times (10s backoff) in case the flakiness happens outside those inner retry windows (e.g. pulling `BASE_IMAGE`).
-- **A post-run smoke test catches runtime crashes a successful build can't see.** A clean `docker build` + `docker run -d` only proves the image is valid and the container started — not that the Shiny process inside stayed up. After starting the container, `build_and_run.sh` polls `http://localhost:80/` for up to 60s; if the app never responds (e.g. a missing data file or an `app.R` error crashed it seconds after startup), it prints the last 50 lines of `docker logs` and exits non-zero instead of reporting success. Requires `curl` on the host — if it's missing, the smoke test is skipped with a warning rather than treated as a hard dependency.
-- Container runs with `--restart unless-stopped` and `-p 80:3838` — Docker's port mapping handles the privileged bind, so no Nginx is needed in this workflow.
+- **Data is bind-mounted AND passed as a container env var, never baked into the image.** If the project has a `data/` directory, `build_and_run.sh` bind-mounts a host path over a framework-specific target (`/srv/shiny-server/data` for R Shiny, `/app/data` for the 3 Python frameworks) at runtime instead of copying its contents into the image, and also sets a `DATA_DIR` env var inside the container pointing at that same path — set `DATA_DIR=/path/to/data ./build_and_run.sh` to specify the host path non-interactively, or leave `DATA_DIR` unset and the script will prompt for it (with a nudge toward the typical Jetstream2 storage volume location, `/media/volume/<volume-name>/...`). Either way, updating the data only needs a `docker restart`, not a rebuild. If the project has no `data/` directory, nothing is prompted or mounted.
+  - **What this requires of the app's code:** an R Shiny app must reference files with a project-root-relative path — e.g. `read_csv("data/wq_baltimore.csv")` — since that's what resolves to Shiny Server's `app_dir` (`/srv/shiny-server`) and where the mount lands. A Python app (Dash/Python Shiny/Streamlit) can instead just read `os.environ["DATA_DIR"]` directly — more portable, since it doesn't hardcode a path convention. An app that already has its own env var name for this (e.g. a `VI_DATACUBE_ROOT`-style variable) can bridge with a one-line shim at the top of its entry file: `os.environ.setdefault("VI_DATACUBE_ROOT", os.environ["DATA_DIR"])`.
+- **Each framework has its own internal container port**, looked up in one place (`container_port_for_framework()` in [`deploy/lib/common.sh`](../deploy/lib/common.sh)): 3838 for Shiny Server, 8050 for Dash (gunicorn), 8000 for Python Shiny (`shiny run`), 8501 for Streamlit. Always mapped to host port 80 via `docker run -p 80:<port>` — Docker's port mapping handles the privileged bind, so no Nginx/reverse proxy is needed.
+- **Network flakiness is retried, not treated as fatal.** Deploying many different projects means hitting more transient apt/pip/CRAN mirror hiccups over time, so several layers retry before giving up: `apt_retry.sh` (shared by all 4 Dockerfiles) wraps every `apt-get install` with up to 3 attempts (10s backoff), `install_deps.R` retries `renv::restore()`/`install.packages()` up to 3 times (checking what's actually still missing afterward, since neither throws an R error on partial failure), and `build_and_run.sh` itself retries a failed `docker build` up to 3 times (10s backoff) in case the flakiness happens outside those inner retry windows (e.g. pulling `BASE_IMAGE`).
+- **A post-run smoke test catches runtime crashes a successful build can't see.** A clean `docker build` + `docker run -d` only proves the image is valid and the container started — not that the app process inside stayed up. After starting the container, `build_and_run.sh` polls `http://localhost:80/` for up to 60s; if the app never responds (e.g. a missing data file or an app error crashed it seconds after startup), it prints the last 50 lines of `docker logs` and exits non-zero instead of reporting success. Requires `curl` on the host — if it's missing, the smoke test is skipped with a warning rather than treated as a hard dependency.
+- Container always runs with `--restart unless-stopped`.
 
 **To update the app after a code change:** re-run `build_and_run.sh`. It rebuilds the image (Docker layer caching keeps this fast unless the system/package layers changed) and replaces the running container.
 
 **To update data when using `DATA_DIR`:** just update the files at that host path and `docker restart <container-name>` — no rebuild needed, since the data is bind-mounted rather than baked in.
 
-**Known limitation:** same as bare-metal — no TLS, since there's no domain to challenge against yet. Also, dependency auto-detection is static analysis — it won't catch packages loaded dynamically (e.g. via a variable passed to `library()`), so an unusual project may occasionally need an explicit `renv.lock` instead of relying on the scan.
+**Known limitations:**
+- No TLS, since there's no domain to challenge against yet — see "Open items" below.
+- R dependency auto-detection is static analysis — it won't catch packages loaded dynamically (e.g. via a variable passed to `library()`), so an unusual project may occasionally need an explicit `renv.lock` instead of relying on the scan.
+- Framework detection is a regex/content-based heuristic, not a real dependency or AST analysis — it can occasionally get an unusual project wrong or find a genuine ambiguity, which is exactly what the `FRAMEWORK=` override exists for.
 
 ---
 
 ## Choosing package versions
 
-Both workflows currently pin:
-- Shiny Server `1.5.22.1017` — check [posit.co/download/shiny-server](https://posit.co/download/shiny-server) for the current release before provisioning new instances.
-- `rocker/r-ver:4.4.1` (Docker default) — check [rocker-project.org](https://rocker-project.org) for the R version to standardize on, or the R version your BASE_IMAGE override ships.
+Currently pinned:
+- Shiny Server `1.5.22.1017` (R Shiny only) — check [posit.co/download/shiny-server](https://posit.co/download/shiny-server) for the current release before provisioning new instances.
+- `rocker/r-ver:4.4.1` (R Shiny default) — check [rocker-project.org](https://rocker-project.org) for the R version to standardize on, or the R version your `BASE_IMAGE` override ships.
+- `python:3.11-slim` (Dash/Python Shiny/Streamlit default).
 
-Update the version strings at the top of `provision_baremetal.sh` and in the `Dockerfile`'s `FROM`/`ARG` lines together, so both workflows stay on comparable R/package versions.
+Update the version strings in the relevant Dockerfile's `ARG`/`FROM` lines (and this doc, if standardizing on a new default across frameworks) together, so a version bump doesn't silently drift out of sync with what's documented here.
 
 ---
 
@@ -155,8 +124,19 @@ From then on, `install_deps.R` detects the lockfile and calls `renv::restore()` 
 
 ---
 
+## Pinning Python package versions
+
+For Dash/Python Shiny/Streamlit, `requirements.txt` is the direct equivalent of an R `renv.lock`, and — unlike R — it's required, not optional (see "R packages are auto-detected, not hardcoded; Python's dependency file is required, not optional" above). To generate one from a known-working environment:
+
+```bash
+pip freeze > requirements.txt
+```
+
+Run this inside whatever environment (virtualenv, conda env, or the same base image used for deployment) actually has the app working, so the pinned versions are ones you've confirmed work together. Unlike R's geospatial packages, the 3 Python frameworks and their typical dependencies are mostly pure-Python or ship prebuilt wheels, so version drift against the base image's system libraries is a much rarer problem here — but a project depending on something that compiles from source (e.g. certain `geopandas`/GDAL-adjacent packages) can hit the same class of issue, and the same "pin it explicitly" fix applies.
+
+---
+
 ## Open items / possible future work
 
-- TLS once a domain is available (Nginx + certbot for bare-metal; Nginx sidecar or Caddy for Docker).
-- Snapshotting the bare-metal instance into a reusable Jetstream2 image once the provisioning script has been validated on real hardware, so future researchers can launch from the image instead of re-running the script.
-- A geospatial-specific bare-metal Dockerfile equivalent, if the auto-detected R package installs on bare-metal (currently left to the app itself) turn out to need the same system-library pinning treatment as Docker's `apt.txt` mechanism.
+- TLS once a domain is available (Nginx sidecar or Caddy in front of the container).
+- A curated list of known-good `BASE_IMAGE` overrides per framework for common heavier dependencies (e.g. a GDAL-ready Python image for geospatial Dash/Streamlit apps, analogous to `rocker/geospatial` for R).

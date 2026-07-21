@@ -1,25 +1,22 @@
-# Jetstream2 RShiny Deploy
+# Jetstream2 Dashboard Deploy
 
-Deployment tooling for running an R Shiny app on a [Jetstream2](https://jetstream-cloud.org/) instance. Point it at any R Shiny project and get it reachable in a browser on port 80 — no manual GDAL/GEOS wrangling, no hand-written package lists.
+Deployment tooling for running a dashboard/app on a [Jetstream2](https://jetstream-cloud.org/) instance. Point it at any **R Shiny**, **Plotly Dash**, **Python Shiny**, or **Streamlit** project and get it reachable in a browser on port 80 — no manual GDAL/GEOS wrangling, no hand-written package lists (where the framework allows it), no figuring out which Dockerfile or run command to use.
 
-Two workflows, both covered in detail in [`docs/deployment.md`](docs/deployment.md):
+A single script, [`deploy/build_and_run.sh`](deploy/build_and_run.sh), auto-detects which of the four frameworks a dropped-in project is (from its code, not just filenames), builds a self-contained Docker image, and runs it bound to port 80. Full details, design rationale, and the auto-detection story are in [`docs/deployment.md`](docs/deployment.md).
 
-- **Docker** (recommended default) — builds a self-contained image with the app baked in. R package dependencies are auto-detected from the app's code, no Dockerfile edits needed per project.
-- **Bare-metal** — provisions Shiny Server + Nginx directly on the instance, for researchers who want to `git pull`/edit the app in place.
-
-## Quick start (Docker)
+## Quick start
 
 ```bash
-git clone https://github.com/stephenconklin/Jetstream2_RShiny_Deploy.git
-cd Jetstream2_RShiny_Deploy
+git clone https://github.com/stephenconklin/Jetstream2-Dashboard-Deploy.git
+cd Jetstream2-Dashboard-Deploy
 
-# Try it with the bundled self-test app first:
-cp -r examples/hello-world/* deploy/docker/app/
-./deploy/docker/build_and_run.sh
+# Try it with a bundled self-test app first (one per framework):
+cp -r examples/r-shiny-hello-world/* deploy/app/
+./deploy/build_and_run.sh
 
-# Then deploy a real project the same way:
-cp -r /path/to/your/shiny/project/* deploy/docker/app/
-./deploy/docker/build_and_run.sh
+# Then deploy a real project the same way — any of the 4 frameworks:
+cp -r /path/to/your/project/* deploy/app/
+./deploy/build_and_run.sh
 ```
 
 Visit `http://<instance-fixed-ip>/` in a browser.
@@ -28,16 +25,26 @@ Visit `http://<instance-fixed-ip>/` in a browser.
 
 ```
 deploy/
-├── provision_baremetal.sh   # bare-metal: Shiny Server + Nginx on Ubuntu 22.04
-└── docker/
-    ├── Dockerfile           # generic single-app Shiny image
-    ├── install_deps.R       # auto-detects and installs the app's R packages
-    ├── build_and_run.sh     # build + run, for any dropped-in Shiny project
-    └── app/                 # drop-in slot for the project to deploy (gitignored)
+├── build_and_run.sh         # the one script: detects framework, builds, runs, smoke-tests
+├── lib/
+│   ├── common.sh            # shared build/run/retry/smoke-test/data-dir logic
+│   └── detect_framework.sh  # framework auto-detection
+├── docker/
+│   ├── Dockerfile.r-shiny        # R Shiny (Shiny Server)
+│   ├── Dockerfile.dash           # Plotly Dash (gunicorn)
+│   ├── Dockerfile.python-shiny   # Python Shiny (shiny run)
+│   ├── Dockerfile.streamlit      # Streamlit
+│   ├── apt_retry.sh              # shared retry-wrapped apt-get helper
+│   ├── install_deps.R            # R-Shiny-only: auto-installs the app's R packages
+│   └── shiny-server.conf         # R-Shiny-only Shiny Server config
+└── app/                     # drop-in slot for the project to deploy (gitignored)
 examples/
-└── hello-world/             # minimal self-test app (classic Shiny "Old Faithful" example)
+├── r-shiny-hello-world/       # R Shiny self-test app
+├── dash-hello-world/          # Plotly Dash self-test app
+├── python-shiny-hello-world/  # Python Shiny self-test app
+└── streamlit-hello-world/     # Streamlit self-test app
 docs/
-└── deployment.md            # full walkthrough of both workflows
+└── deployment.md             # full walkthrough, prerequisites, and design rationale
 ```
 
 See [`docs/deployment.md`](docs/deployment.md) for prerequisites, step-by-step instructions, and the reasoning behind each design choice.
