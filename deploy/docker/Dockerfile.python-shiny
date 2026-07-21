@@ -1,0 +1,41 @@
+# Generic single-app Python Shiny image. Works for any project dropped into
+# the "app" build-context directory (app.py with a top-level `app =
+# App(...)`, plus requirements.txt — which must list the `shiny` package
+# itself — and optional data/ and apt.txt) — see build_and_run.sh.
+ARG BASE_IMAGE=python:3.11-slim
+FROM ${BASE_IMAGE}
+
+WORKDIR /app
+
+# Wraps `apt-get update && apt-get install -y --no-install-recommends "$@"`
+# with a few retries — transient mirror hiccups are common enough across
+# many different project builds to be worth retrying before failing outright.
+COPY apt_retry.sh /usr/local/bin/apt_retry.sh
+RUN chmod +x /usr/local/bin/apt_retry.sh
+
+# Project-specific system libraries (e.g. libgdal-dev for a geopandas
+# dependency) that BASE_IMAGE doesn't already provide. One package name per
+# line in the project's apt.txt; leave it empty if none are needed.
+COPY app/apt.txt /tmp/apt.txt
+RUN if [ -s /tmp/apt.txt ]; then \
+      apt_retry.sh $(cat /tmp/apt.txt) \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# Deps installed before the rest of the app is copied in, so this layer is
+# cached across rebuilds that only change app code, not dependencies.
+# requirements.txt must itself list `shiny` — unlike Dash's gunicorn, the
+# `shiny run` CLI is the package's own entrypoint, not force-installed here.
+COPY app/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app/ .
+RUN rm -f apt.txt
+
+ARG PORT=8000
+ARG ENTRY_MODULE=app
+ENV PORT=${PORT}
+ENV ENTRY_MODULE=${ENTRY_MODULE}
+EXPOSE ${PORT}
+
+CMD sh -c "shiny run ${ENTRY_MODULE}.py --host 0.0.0.0 --port ${PORT}"

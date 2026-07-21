@@ -3,10 +3,14 @@
 .RData
 .Ruserdata
 
-# Docker deploy drop-in slot: keep the folder, ignore whatever project
-# gets dropped into it.
-deploy/docker/app/*
-!deploy/docker/app/README.md
+__pycache__/
+*.pyc
+.venv/
+
+# Deploy drop-in slot: keep the folder, ignore whatever project gets
+# dropped into it.
+deploy/app/*
+!deploy/app/README.md
 
 # VS Code Project File
-Jetstream2_RShiny_Deploy.code-workspace
+Jetstream2-Dashboard-Deploy.code-workspace
