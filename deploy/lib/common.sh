@@ -115,7 +115,7 @@ build_image() {
 
   cp "$DOCKERFILE_PATH" "$build_ctx/Dockerfile"
   local f
-  for f in "${SUPPORT_FILES[@]}"; do
+  for f in "${SUPPORT_FILES[@]+"${SUPPORT_FILES[@]}"}"; do
     cp "$TOOLING_DIR/docker/$f" "$build_ctx/"
   done
   mkdir -p "$build_ctx/app"
@@ -129,7 +129,7 @@ build_image() {
   for attempt in $(seq 1 "$build_tries"); do
     if docker build \
       --build-arg BASE_IMAGE="$BASE_IMAGE" \
-      "${EXTRA_BUILD_ARGS[@]}" \
+      "${EXTRA_BUILD_ARGS[@]+"${EXTRA_BUILD_ARGS[@]}"}" \
       -t "$IMAGE_NAME:latest" \
       "$build_ctx"; then
       build_ok=1
@@ -162,7 +162,7 @@ run_container() {
     --name "$CONTAINER_NAME" \
     --restart unless-stopped \
     -p 80:"$INTERNAL_PORT" \
-    "${data_mount_args[@]}" \
+    "${data_mount_args[@]+"${data_mount_args[@]}"}" \
     "$IMAGE_NAME:latest"
 }
 
