@@ -17,12 +17,15 @@
 #                sf/terra/raster/stars/rgdal/rgeos, otherwise rocker/r-ver:4.4.1
 #                (bare R). Set this explicitly to skip detection, e.g. for
 #                rocker/shiny-verse on tidyverse-heavy projects.
-#   DATA_DIR   - host path (e.g. a mounted Jetstream2 storage volume) to
-#                bind-mount over the project's data/ directory at runtime
-#                instead of baking data/ into the image. The app must read
-#                data from a "data/" relative path for this to line up.
-#                Updating files under DATA_DIR takes effect on the next
-#                `docker restart` — no rebuild needed.
+#   DATA_DIR   - host path (e.g. a mounted Jetstream2 storage volume, typically
+#                under /media/volume/<volume-name>/...) to bind-mount over the
+#                project's data/ directory at runtime. Data is never baked
+#                into the image: if the project has a data/ directory and
+#                DATA_DIR isn't set, you'll be prompted for the path
+#                interactively. The app must read data from a "data/"
+#                relative path for this to line up. Updating files under
+#                DATA_DIR takes effect on the next `docker restart` — no
+#                rebuild needed.
 set -euo pipefail
 
 TOOLING_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -62,7 +65,46 @@ if [[ -z "${BASE_IMAGE+set}" ]]; then
   fi
 fi
 
-if [[ -n "$DATA_DIR" && ! -d "$DATA_DIR" ]]; then
+# Without a renv.lock, install_deps.R installs whatever's currently newest on
+# CRAN for each required package — geospatial packages in particular
+# (sf/terra/...) compile against the base image's fixed GDAL/GEOS/PROJ, so a
+# newer CRAN release can break a build that worked yesterday. This can't be
+# reliably predicted ahead of time (that's what the build step itself is
+# for) — just flag the risk so it's not a surprise.
+if uses_geospatial_packages && [[ ! -f "$PROJECT_DIR/renv.lock" ]]; then
+  echo "Warning: this project uses geospatial packages (sf/terra/raster/...) but has" >&2
+  echo "no renv.lock, so install_deps.R will install whatever's newest on CRAN. A" >&2
+  echo "future CRAN release of one of these packages could require a newer GDAL/GEOS/PROJ" >&2
+  echo "than $BASE_IMAGE ships and break this build. Consider pinning versions with" >&2
+  echo "renv::snapshot() once you have a working install. See docs/deployment.md." >&2
+fi
+
+# Data is never baked into the image. If the project ships a data/ directory
+# and the caller hasn't already pointed DATA_DIR at a real location, prompt
+# for one interactively — the app's data must come from a bind-mounted host
+# path (typically a Jetstream2 storage volume) instead.
+if [[ -d "$PROJECT_DIR/data" && -z "$DATA_DIR" ]]; then
+  if [[ ! -t 0 ]]; then
+    echo "This project has a data/ directory, but DATA_DIR isn't set and no terminal" >&2
+    echo "is attached to prompt for one. Set DATA_DIR=/media/volume/<volume-name>/... and re-run." >&2
+    exit 1
+  fi
+  echo
+  echo "This project ships a data/ directory. To keep data out of the Docker image"
+  echo "(so it survives rebuilds and isn't duplicated), point this at the actual"
+  echo "location of your data instead — usually a Jetstream2 storage volume mounted"
+  echo "under /media/volume/<volume-name>/... (run 'df -h' if you're not sure of the"
+  echo "exact path)."
+  while [[ -z "$DATA_DIR" ]]; do
+    read -rp "Enter the full path to your data directory: " DATA_DIR
+    if [[ -z "$DATA_DIR" ]]; then
+      echo "A data directory path is required — this project's app.R reads from data/." >&2
+    elif [[ ! -d "$DATA_DIR" ]]; then
+      echo "'$DATA_DIR' is not a directory. Try again." >&2
+      DATA_DIR=""
+    fi
+  done
+elif [[ -n "$DATA_DIR" && ! -d "$DATA_DIR" ]]; then
   echo "DATA_DIR '$DATA_DIR' is not a directory." >&2
   exit 1
 fi

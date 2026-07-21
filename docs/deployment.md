@@ -85,12 +85,14 @@ Jetstream2's standard Ubuntu image ships with Docker preinstalled, so no install
 
 **How the genericization works:**
 - **Base image is auto-detected, with a swappable override.** `build_and_run.sh` scans the project's `.R`/`.Rmd` files for `library()`/`require()`/`::` usage of `sf`, `terra`, `raster`, `stars`, `rgdal`, or `rgeos`, and picks `rocker/geospatial:4.4.1` automatically when it finds one — otherwise it falls back to `rocker/r-ver:4.4.1` (bare R). This is a best-effort heuristic (a regex over source files, not a real dependency graph), so set `BASE_IMAGE` explicitly to skip detection — e.g. `BASE_IMAGE=rocker/shiny-verse ./build_and_run.sh` for a tidyverse-heavy project the scan wouldn't otherwise flag, or to force a specific geospatial image version.
+  - **Version-drift warning for geospatial projects without a lockfile.** If the same scan detects geospatial packages but the project has no `renv.lock`, `build_and_run.sh` prints a warning before building: without a lockfile, `install_deps.R` always installs whatever's newest on CRAN, and a new release of `sf`/`terra`/etc. can require a newer GDAL/GEOS/PROJ than the fixed base image ships — breaking a build that worked previously, with no code change on your end. This can't be predicted reliably ahead of time (only actually compiling proves it), so the warning is just a nudge, not a guarantee. See "Pinning R package versions to avoid CRAN version drift" below.
 - **A baseline of common compile-time headers is always installed** (`libuv`, `zlib`, `openssl`, `libcurl`, `libxml2`, `fontconfig`/`freetype`/`harfbuzz`/`fribidi`, `png`/`jpeg`). These aren't optional because `shiny` itself won't install without them — its dependency `httpuv` needs `libuv`/`zlib` to compile, and common plotting packages need the font-rendering libs. Anything beyond this baseline (GDAL, Java, ImageMagick, …) is either covered by a `BASE_IMAGE` override or the project's `apt.txt`.
 - **R packages are auto-detected, not hardcoded.** [`install_deps.R`](../deploy/docker/install_deps.R) runs at build time: if the project ships an `renv.lock`, it restores those exact versions; otherwise it statically scans the project's `.R`/`.Rmd` files for `library()`/`require()` calls (via `renv::dependencies()`, which doesn't require the project to have ever used `renv`) and installs whatever the base image doesn't already provide. If any required package is still missing afterward, the script fails loudly — `install.packages()`/`renv::restore()` otherwise print an error but exit 0, which would let `docker build` report success on a broken image.
 - **Extra system libraries are opt-in.** An optional `apt.txt` in the project directory (one package per line) covers anything beyond the baseline and `BASE_IMAGE` — e.g. `default-jdk` for `rJava`, `imagemagick` for `magick`. Empty or absent is fine.
 - **Entry point needs no configuration.** Shiny Server serves whatever directory it's pointed at using the same convention `shiny::runApp()` does — `app.R`, or a `ui.R`/`server.R` pair — so no project-specific config is needed there either.
-- **The project is baked into the image** at build time (not bind-mounted), so the resulting image is self-contained and versioned.
-- **Data can optionally be bind-mounted instead of baked in.** By default, a project's `data/` directory is baked into the image like the rest of the code. Setting `DATA_DIR=/path/to/data ./build_and_run.sh` instead bind-mounts that host path (e.g. a Jetstream2 storage volume) to `/srv/shiny-server/data` at runtime, so updating the data only needs a `docker restart`, not a rebuild. Requires the app to read data via a `data/`-relative path.
+- **The project's code is baked into the image** at build time (not bind-mounted), so the resulting image is self-contained and versioned.
+- **Data is never baked into the image.** If the project has a `data/` directory, `build_and_run.sh` bind-mounts a host path over it at `/srv/shiny-server/data` at runtime instead of copying its contents into the image — set `DATA_DIR=/path/to/data ./build_and_run.sh` to specify it non-interactively, or leave `DATA_DIR` unset and the script will prompt for the path (with a nudge toward the typical Jetstream2 storage volume location, `/media/volume/<volume-name>/...`). Either way, updating the data only needs a `docker restart`, not a rebuild. If the project has no `data/` directory, nothing is prompted or mounted.
+  - **What this requires of the app's code:** the data folder must be named `data` at the project's top level, and R code must reference files under it with a project-root-relative path — e.g. `read_csv("data/wq_baltimore.csv")`, not an absolute path or one that assumes a different working directory. This works because Shiny Server's `app_dir` is `/srv/shiny-server` (see `shiny-server.conf`), which is also where the project is copied to (`COPY app/ /srv/shiny-server/`) and where `DATA_DIR` gets bind-mounted (as `/srv/shiny-server/data`) — so a `data/`-relative path in the app's code resolves to the mount either way. No env var or Shiny-side awareness of the mount is needed. A project that reads data via an absolute path or a non-standard folder name won't pick up the bind-mounted data.
 - Container runs with `--restart unless-stopped` and `-p 80:3838` — Docker's port mapping handles the privileged bind, so no Nginx is needed in this workflow.
 
 **To update the app after a code change:** re-run `build_and_run.sh`. It rebuilds the image (Docker layer caching keeps this fast unless the system/package layers changed) and replaces the running container.
@@ -108,6 +110,39 @@ Both workflows currently pin:
 - `rocker/r-ver:4.4.1` (Docker default) — check [rocker-project.org](https://rocker-project.org) for the R version to standardize on, or the R version your BASE_IMAGE override ships.
 
 Update the version strings at the top of `provision_baremetal.sh` and in the `Dockerfile`'s `FROM`/`ARG` lines together, so both workflows stay on comparable R/package versions.
+
+---
+
+## Pinning R package versions to avoid CRAN version drift
+
+Without a project-supplied `renv.lock`, `install_deps.R` always installs whatever's newest on CRAN for each required package (see "R packages are auto-detected" above). For geospatial packages (`sf`, `terra`, `raster`, …) that compile C/C++ code against the base image's fixed GDAL/GEOS/PROJ, this means a build that worked last month can fail today simply because CRAN shipped a newer package release that needs a newer system library version than the pinned `BASE_IMAGE` provides — with no change to the project's own code. `build_and_run.sh` warns about this when it detects geospatial packages with no `renv.lock`, but the warning alone doesn't fix anything.
+
+To pin versions and get reproducible builds:
+
+1. Start an interactive R session in the *same* base image the deploy will actually use, so whatever compiles here is guaranteed to compile at deploy time too — a lockfile only records version numbers, not whether they'll build against this image's system libraries:
+   ```bash
+   docker run --rm -it -v /path/to/project:/app rocker/geospatial:4.4.1 bash
+   cd /app && R
+   ```
+2. In R, scaffold `renv` without snapshotting your global library, then install the project's dependencies (working backward through CRAN's archive for any package that fails to compile — see `https://cran.r-project.org/src/contrib/Archive/<package>/` for the version history):
+   ```r
+   install.packages("renv")
+   renv::init(bare = TRUE)
+   # for a package that needs an older, compatible version:
+   install.packages(
+     "https://cran.r-project.org/src/contrib/Archive/terra/terra_1.8-15.tar.gz",
+     repos = NULL, type = "source"
+   )
+   # then the rest of the project's normal library()'d packages as usual
+   ```
+3. Once everything loads without error, capture it:
+   ```r
+   renv::snapshot()
+   ```
+   This writes `renv.lock` into the project directory (visible on the host too, via the bind mount).
+4. Make sure `renv.lock` ships with the deployed project — commit it to the app's own repo if you maintain it, or otherwise just make sure it's present in whatever directory you pass to `build_and_run.sh` (it doesn't need to be tracked by the app's upstream repo; `install_deps.R` only checks whether the file exists on disk at build time).
+
+From then on, `install_deps.R` detects the lockfile and calls `renv::restore()` instead of installing CRAN-latest, so rebuilds are reproducible regardless of what CRAN does in the meantime.
 
 ---
 
