@@ -7,8 +7,8 @@ A single script, [`deploy/build_and_run.sh`](deploy/build_and_run.sh), auto-dete
 ## Quick start
 
 ```bash
-git clone https://github.com/stephenconklin/Jetstream2-Dashboard-Deploy.git
-cd Jetstream2-Dashboard-Deploy
+git clone https://github.com/stephenconklin/Jetstream2_Dashboard_Deploy.git
+cd Jetstream2_Dashboard_Deploy
 
 # Try it with a bundled self-test app first (one per framework):
 cp -r examples/r-shiny-hello-world/* deploy/app/
