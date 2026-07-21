@@ -27,6 +27,12 @@ Override the base image for projects needing heavier system libs pre-built (e.g.
 BASE_IMAGE=rocker/geospatial:4.4.1 ./deploy/docker/build_and_run.sh
 ```
 
+Triage a project without building anything (reports detected entry point, base image, `renv.lock`/`data/`/`apt.txt` presence):
+
+```bash
+./deploy/docker/build_and_run.sh --dry-run /path/to/project
+```
+
 Bare-metal provisioning (run as root/sudo on the target Ubuntu 22.04 instance):
 
 ```bash
@@ -47,8 +53,10 @@ Both workflows share the same dependency-installation logic (`deploy/docker/inst
 - **R packages are auto-detected, not hardcoded.** `install_deps.R` restores `renv.lock` if the project ships one; otherwise it statically scans `.R`/`.Rmd` files via `renv::dependencies()` (works even if the project never used `renv`) and installs whatever's missing. It fails loudly (non-zero exit) if any required package is still missing afterward — `install.packages()`/`renv::restore()` normally exit 0 even on partial failure, which would otherwise let `docker build` report success on a broken image. Preserve this fail-loud check in any edit to that script.
 - **System libraries are layered, not project-specific.** The Dockerfile always installs a baseline of compile-time headers (`libuv`, `zlib`, font-rendering libs, etc.) that `shiny`/`httpuv` need regardless of project. Beyond that: a `BASE_IMAGE` build-arg override (default `rocker/r-ver:4.4.1`) for projects needing a heavier pre-built environment (`rocker/geospatial`, `rocker/shiny-verse`), and an optional project-supplied `apt.txt` (one package per line) for anything else. Don't add project-specific system packages to the Dockerfile itself — they belong in one of these two extension points.
 - **`deploy/docker/app/` is a gitignored drop-in slot**, not a place to commit code — only its `README.md` is tracked (see `.gitignore`). Don't add real app code there expecting it to persist/ship.
-- **Entry point convention is Shiny's own** (`app.R`, or `ui.R`/`server.R`) — no per-project Shiny Server config is needed since both workflows serve a single app at `/`.
+- **Entry point convention is Shiny's own** (`app.R`, `ui.R`/`server.R`, or an R Markdown Shiny document with `runtime: shiny`) — no per-project Shiny Server config is needed since both workflows serve a single app at `/`. `build_and_run.sh` gives a specific, actionable error for a golem-packaged app that only ships `inst/app.R` (needs a root-level shim), rather than a generic "nothing found" message.
 - **Data is bind-mounted, never baked into the Docker image.** If a project has a `data/` directory, `build_and_run.sh` mounts a host path (`DATA_DIR`, prompted for interactively if unset — see `docs/deployment.md`) onto `/srv/shiny-server/data` at runtime. This requires the app's code to reference data via a project-root-relative `data/...` path (e.g. `read_csv("data/foo.csv")`), since that's what resolves to both the container's app root (`/srv/shiny-server`, matching Shiny Server's `app_dir`) and the mount target. An app using an absolute path or a differently-named data folder won't pick up the mount.
+- **Network flakiness is retried, not fatal.** `apt_retry.sh` wraps every `apt-get install` in the Dockerfile with a few retries, `install_deps.R` retries `renv::restore()`/`install.packages()` based on what's still missing afterward (these don't throw R errors on partial failure), and `build_and_run.sh` retries a failed `docker build` itself. Across many different projects, transient mirror/network hiccups are common enough to be worth a few retries before failing a whole build.
+- **A post-run smoke test catches runtime crashes a successful build can't see.** After `docker run -d`, `build_and_run.sh` polls the container over HTTP for ~60s before declaring success; if the Shiny process crashed at startup (e.g. a missing data file, or an app.R error), it dumps `docker logs --tail 50` and exits non-zero instead of silently reporting the container as "running."
 
 When changing pinned versions (Shiny Server, R/`rocker/r-ver`), update `provision_baremetal.sh` and the `Dockerfile`'s `ARG`/`FROM` lines together so both workflows stay comparable — see "Choosing package versions" in `docs/deployment.md`.
 

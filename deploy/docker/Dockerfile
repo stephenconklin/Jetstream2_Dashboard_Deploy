@@ -9,11 +9,16 @@
 ARG BASE_IMAGE=rocker/r-ver:4.4.1
 FROM ${BASE_IMAGE}
 
+# Wraps `apt-get update && apt-get install -y --no-install-recommends "$@"`
+# with a few retries — transient mirror hiccups are common enough across
+# many different project builds to be worth retrying before failing outright.
+COPY apt_retry.sh /usr/local/bin/apt_retry.sh
+RUN chmod +x /usr/local/bin/apt_retry.sh
+
 # Shiny Server gives crash-restart and multi-session worker handling that a
 # bare `shiny::runApp()` call doesn't provide.
 ARG SHINY_SERVER_VERSION=1.5.22.1017
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      gdebi-core curl \
+RUN apt_retry.sh gdebi-core curl \
     && curl -fsSL "https://download3.rstudio.org/ubuntu-18.04/x86_64/shiny-server-${SHINY_SERVER_VERSION}-amd64.deb" -o /tmp/shiny-server.deb \
     && gdebi -n /tmp/shiny-server.deb \
     && rm -f /tmp/shiny-server.deb \
@@ -25,7 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # (ragg/systemfonts/textshaping) need fontconfig/freetype/harfbuzz.
 # Anything more specialized (e.g. rJava, GDAL) belongs in the project's
 # apt.txt or a heavier BASE_IMAGE override instead of here.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt_retry.sh \
       libuv1-dev \
       zlib1g-dev \
       libssl-dev \
@@ -45,8 +50,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # line in the project's apt.txt; leave it empty if none are needed.
 COPY app/apt.txt /tmp/apt.txt
 RUN if [ -s /tmp/apt.txt ]; then \
-      apt-get update \
-      && xargs -a /tmp/apt.txt apt-get install -y --no-install-recommends \
+      apt_retry.sh $(cat /tmp/apt.txt) \
       && rm -rf /var/lib/apt/lists/*; \
     fi
 

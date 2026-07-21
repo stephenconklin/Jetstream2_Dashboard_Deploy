@@ -27,15 +27,45 @@ if (!requireNamespace("renv", quietly = TRUE)) {
 
 lockfile <- file.path(project_dir, "renv.lock")
 
+# install.packages()/renv::restore() print errors but return normally (not an
+# R error condition) on partial failure — e.g. a transient CRAN/mirror
+# timeout — so retries are driven by checking what's still missing
+# afterward, not by catching an exception. Across many different projects,
+# transient network hiccups during a multi-package install are common enough
+# to be worth a few retries before failing the whole build.
+INSTALL_TRIES <- 3
+INSTALL_RETRY_WAIT_SEC <- 15
+
 if (file.exists(lockfile)) {
   required <- names(renv::lockfile_read(lockfile)$Packages)
-  renv::restore(project = project_dir, lockfile = lockfile, prompt = FALSE)
+  for (attempt in seq_len(INSTALL_TRIES)) {
+    tryCatch(
+      renv::restore(project = project_dir, lockfile = lockfile, prompt = FALSE),
+      error = function(e) message("renv::restore() attempt failed: ", conditionMessage(e))
+    )
+    if (length(setdiff(required, rownames(installed.packages()))) == 0) break
+    if (attempt < INSTALL_TRIES) {
+      message(sprintf("Some packages still missing after attempt %d/%d — retrying in %ds...",
+                       attempt, INSTALL_TRIES, INSTALL_RETRY_WAIT_SEC))
+      Sys.sleep(INSTALL_RETRY_WAIT_SEC)
+    }
+  }
 } else {
   deps <- renv::dependencies(path = project_dir, progress = FALSE)
   required <- unique(deps$Package)
-  pkgs <- setdiff(required, rownames(installed.packages()))
-  if (length(pkgs) > 0) {
-    install.packages(pkgs, Ncpus = parallel::detectCores())
+  for (attempt in seq_len(INSTALL_TRIES)) {
+    pkgs <- setdiff(required, rownames(installed.packages()))
+    if (length(pkgs) == 0) break
+    tryCatch(
+      install.packages(pkgs, Ncpus = parallel::detectCores()),
+      error = function(e) message("install.packages() attempt failed: ", conditionMessage(e))
+    )
+    if (length(setdiff(required, rownames(installed.packages()))) == 0) break
+    if (attempt < INSTALL_TRIES) {
+      message(sprintf("Some packages still missing after attempt %d/%d — retrying in %ds...",
+                       attempt, INSTALL_TRIES, INSTALL_RETRY_WAIT_SEC))
+      Sys.sleep(INSTALL_RETRY_WAIT_SEC)
+    }
   }
 }
 
