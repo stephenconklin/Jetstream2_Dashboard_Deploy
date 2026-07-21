@@ -19,8 +19,8 @@ A single Docker-based workflow for running an app on a Jetstream2 instance, gene
 1. Clone this repo into your home directory on the instance:
 
    ```bash
-   git clone https://github.com/stephenconklin/Jetstream2-Dashboard-Deploy.git
-   cd Jetstream2-Dashboard-Deploy
+   git clone https://github.com/stephenconklin/Jetstream2_Dashboard_Deploy.git
+   cd Jetstream2_Dashboard_Deploy
    ```
 
 2. Get your project into [`deploy/app/`](../deploy/app/README.md) — this folder is gitignored (it's a drop-in slot, not something that ships in git), so a fresh clone always starts with it empty.

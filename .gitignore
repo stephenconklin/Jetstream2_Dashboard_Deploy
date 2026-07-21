@@ -2,6 +2,7 @@
 .Rhistory
 .RData
 .Ruserdata
+.DS_Store
 
 __pycache__/
 *.pyc
@@ -13,4 +14,4 @@ deploy/app/*
 !deploy/app/README.md
 
 # VS Code Project File
-Jetstream2-Dashboard-Deploy.code-workspace
+Jetstream2_Dashboard_Deploy.code-workspace
