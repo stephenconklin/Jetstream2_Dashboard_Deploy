@@ -8,8 +8,18 @@
 args <- commandArgs(trailingOnly = TRUE)
 project_dir <- if (length(args) >= 1) args[[1]] else "."
 
+# Many R base images (rocker/geospatial included) point the default "CRAN"
+# repo at a Posit Package Manager snapshot frozen on the date the image was
+# built. renv::restore() resolves a lockfile's "CRAN" packages against
+# whatever "CRAN" currently means, so a pinned version released *after* that
+# frozen snapshot date would otherwise 404 forever, no matter how long you
+# wait. Point at the real, rolling CRAN mirror so any pinned version can
+# actually be fetched regardless of when it was released relative to the
+# base image's build date.
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+
 if (!requireNamespace("renv", quietly = TRUE)) {
-  install.packages("renv", repos = "https://cloud.r-project.org")
+  install.packages("renv")
 }
 
 lockfile <- file.path(project_dir, "renv.lock")
@@ -22,7 +32,7 @@ if (file.exists(lockfile)) {
   required <- unique(deps$Package)
   pkgs <- setdiff(required, rownames(installed.packages()))
   if (length(pkgs) > 0) {
-    install.packages(pkgs, repos = "https://cloud.r-project.org", Ncpus = parallel::detectCores())
+    install.packages(pkgs, Ncpus = parallel::detectCores())
   }
 }
 
