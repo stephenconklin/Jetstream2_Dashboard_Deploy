@@ -7,3 +7,6 @@
 # gets dropped into it.
 deploy/docker/app/*
 !deploy/docker/app/README.md
+
+# VS Code Project File
+Jetstream2_RShiny_Deploy.code-workspace
