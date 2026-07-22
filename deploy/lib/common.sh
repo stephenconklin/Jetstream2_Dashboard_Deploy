@@ -97,6 +97,44 @@ resolve_data_dir() {
   fi
 }
 
+# R Shiny only: if the project has no renv.lock, generate one before the
+# real `docker build`, by building Dockerfile.r-shiny's `deps-base` stage
+# (the same apt/compile-header environment the real build uses) and running
+# generate_lock.R inside it — a plain `docker run`, not `docker build`, so a
+# compile failure (e.g. a CRAN-latest package needing a newer system library
+# than BASE_IMAGE ships) surfaces here with clean output, before the real
+# build starts. Doesn't resolve that failure itself — see
+# docs/deployment.md's "Pinning R package versions" section for the manual
+# fallback — but locks in whatever version does work once you've fixed it
+# and re-run.
+#
+# Reads from the caller: TOOLING_DIR, PROJECT_DIR, IMAGE_NAME, BASE_IMAGE,
+# DOCKERFILE_PATH, SUPPORT_FILES (same as build_image()). Temporarily
+# overrides IMAGE_NAME/BUILD_TARGET to reuse build_image() for the
+# deps-base stage, then restores them.
+generate_renv_lock() {
+  echo "No renv.lock found — generating one against $BASE_IMAGE before the build..." >&2
+
+  local real_image_name="$IMAGE_NAME"
+  IMAGE_NAME="${real_image_name}-deps-base"
+  BUILD_TARGET="deps-base"
+  build_image
+  IMAGE_NAME="$real_image_name"
+  BUILD_TARGET=""
+
+  if ! docker run --rm \
+    -v "$(cd "$PROJECT_DIR" && pwd):/app" \
+    -v "$TOOLING_DIR/docker/generate_lock.R:/tmp/generate_lock.R:ro" \
+    "${real_image_name}-deps-base:latest" \
+    Rscript /tmp/generate_lock.R /app; then
+    echo "Failed to generate renv.lock. See docs/deployment.md's 'Pinning R package" >&2
+    echo "versions' section for how to resolve a compile failure (e.g. a package needing" >&2
+    echo "a newer system library than $BASE_IMAGE ships) by pinning an older version by hand." >&2
+    exit 1
+  fi
+  echo "renv.lock generated at $PROJECT_DIR/renv.lock" >&2
+}
+
 # Assembles a temp build context and runs `docker build`, retrying the whole
 # build a couple of times (transient network hiccups fetching BASE_IMAGE or
 # apt/pip/CRAN packages are common enough across many different projects to
@@ -108,10 +146,19 @@ resolve_data_dir() {
 #   SUPPORT_FILES - extra deploy/docker/ files to copy alongside the
 #                   Dockerfile (e.g. apt_retry.sh, install_deps.R)
 #   EXTRA_BUILD_ARGS - additional `--build-arg NAME=value` strings
+# Optionally reads BUILD_TARGET (unset/empty builds the Dockerfile's default
+# last stage) to build a named stage instead — used by generate_renv_lock()
+# below to build just Dockerfile.r-shiny's `deps-base` stage.
 build_image() {
   local build_ctx
   build_ctx="$(mktemp -d)"
-  trap 'rm -rf "$build_ctx"' RETURN
+  # A RETURN trap isn't scoped to the function that set it — it persists in
+  # the shell and fires on every subsequent function return until cleared.
+  # build_image() can be called more than once per script run (once for
+  # generate_renv_lock()'s deps-base stage, once for the real build), so the
+  # trap clears itself right after firing, or a later, unrelated function
+  # return would try to rm -rf this now out-of-scope $build_ctx again.
+  trap 'rm -rf "$build_ctx"; trap - RETURN' RETURN
 
   cp "$DOCKERFILE_PATH" "$build_ctx/Dockerfile"
   local f
@@ -125,11 +172,15 @@ build_image() {
   fi
   touch "$build_ctx/app/apt.txt"   # harmless no-op if the project already has one
 
+  local target_args=()
+  [[ -n "${BUILD_TARGET:-}" ]] && target_args=(--target "$BUILD_TARGET")
+
   local build_tries=3 attempt build_ok=0
   for attempt in $(seq 1 "$build_tries"); do
     if docker build \
       --build-arg BASE_IMAGE="$BASE_IMAGE" \
       "${EXTRA_BUILD_ARGS[@]+"${EXTRA_BUILD_ARGS[@]}"}" \
+      "${target_args[@]+"${target_args[@]}"}" \
       -t "$IMAGE_NAME:latest" \
       "$build_ctx"; then
       build_ok=1

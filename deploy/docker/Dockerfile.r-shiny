@@ -6,8 +6,14 @@
 # `shiny` itself) are auto-detected and installed below. Override BASE_IMAGE
 # for projects that need heavier system libraries pre-built, e.g.
 # rocker/geospatial for sf/terra/raster, or rocker/shiny-verse for tidyverse.
+#
+# Split into two stages so build_and_run.sh can build just `deps-base` (via
+# `docker build --target deps-base`) to generate a renv.lock in the exact
+# same compile environment the real build below will use — otherwise a
+# preflight `docker run` against bare BASE_IMAGE would be missing the apt
+# headers installed here and fail to compile even ordinary packages.
 ARG BASE_IMAGE=rocker/r-ver:4.4.1
-FROM ${BASE_IMAGE}
+FROM ${BASE_IMAGE} AS deps-base
 
 # Wraps `apt-get update && apt-get install -y --no-install-recommends "$@"`
 # with a few retries — transient mirror hiccups are common enough across
@@ -53,6 +59,8 @@ RUN if [ -s /tmp/apt.txt ]; then \
       apt_retry.sh $(cat /tmp/apt.txt) \
       && rm -rf /var/lib/apt/lists/*; \
     fi
+
+FROM deps-base AS final
 
 COPY shiny-server.conf /etc/shiny-server/shiny-server.conf
 
