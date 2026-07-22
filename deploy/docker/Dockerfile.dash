@@ -13,6 +13,13 @@ WORKDIR /app
 COPY apt_retry.sh /usr/local/bin/apt_retry.sh
 RUN chmod +x /usr/local/bin/apt_retry.sh
 
+# git isn't in python:3.11-slim, but pip needs it to resolve any
+# requirements.txt entry pinned to a VCS URL (e.g. a pre-release/patched
+# package installed via git+https://...@<rev>) — common enough that it's
+# worth baking in rather than making every such project also carry it in
+# apt.txt.
+RUN apt_retry.sh git && rm -rf /var/lib/apt/lists/*
+
 # Project-specific system libraries (e.g. libgdal-dev for a geopandas
 # dependency) that BASE_IMAGE doesn't already provide. One package name per
 # line in the project's apt.txt; leave it empty if none are needed.
