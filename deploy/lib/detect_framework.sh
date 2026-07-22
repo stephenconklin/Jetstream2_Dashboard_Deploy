@@ -48,6 +48,18 @@ uses_geospatial_packages() {
       return 0
     fi
   done
+  # A project's own code may only call library(leaflet) etc. while a
+  # geospatial package rides in transitively (e.g. leaflet Imports sf) —
+  # invisible to the source-file scan above. If a renv.lock is present,
+  # also check its resolved package list directly, since that's the actual
+  # set of things that will get compiled regardless of what the app calls.
+  if [[ -f "$PROJECT_DIR/renv.lock" ]]; then
+    for pkg in "${GEOSPATIAL_PACKAGES[@]}"; do
+      if grep -qE "\"Package\": *\"${pkg}\"" "$PROJECT_DIR/renv.lock"; then
+        return 0
+      fi
+    done
+  fi
   return 1
 }
 
