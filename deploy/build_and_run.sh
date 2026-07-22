@@ -18,7 +18,11 @@
 #   renv.lock         - (R Shiny) exact package versions to restore (skips dependency scanning).
 #                       If absent, one is generated automatically before the build by installing
 #                       the project's scanned dependencies against BASE_IMAGE and snapshotting.
-#   requirements.txt   - (Dash/Python Shiny/Streamlit) REQUIRED — pip dependencies
+#   requirements.txt   - (Dash/Python Shiny/Streamlit) REQUIRED — pip dependencies.
+#                       If absent but the project has a uv.lock, requirements.txt
+#                       is generated automatically from it before the build.
+#   uv.lock             - (Dash/Python Shiny/Streamlit) fallback for requirements.txt,
+#                       for projects managed with uv instead of pip directly.
 #   apt.txt            - extra system packages (one per line), any framework
 #
 # Env vars:
@@ -94,11 +98,19 @@ else
   # optional — unlike R's renv::dependencies() static-scan fallback, Python
   # has no reliable way to infer PyPI package names from import statements
   # (e.g. `import cv2` comes from the package `opencv-python`), so there's
-  # no safe fallback if it's missing.
+  # no safe fallback if it's missing. The one exception: a project managed
+  # with uv (pyproject.toml + uv.lock) already has a fully-resolved,
+  # pinned dependency set under a different name — generate requirements.txt
+  # from it rather than failing.
   BASE_IMAGE="${BASE_IMAGE:-python:3.11-slim}"
+  GENERATED_REQS_FROM_UV=0
+  if [[ ! -f "$PROJECT_DIR/requirements.txt" && -f "$PROJECT_DIR/uv.lock" ]]; then
+    generate_requirements_from_uv
+    GENERATED_REQS_FROM_UV=1
+  fi
   require_file_or_fail "$PROJECT_DIR/requirements.txt" "$FRAMEWORK" \
-    "Unlike R (which can fall back to scanning your code), Python has no reliable way to auto-detect package names from import statements (e.g. \`import cv2\` comes from the PyPI package \`opencv-python\`, not \`cv2\`). Run \`pip freeze > requirements.txt\` in your project's working environment, or write one by hand."
-  DEPS_STATUS="requirements.txt present"
+    "Unlike R (which can fall back to scanning your code), Python has no reliable way to auto-detect package names from import statements (e.g. \`import cv2\` comes from the PyPI package \`opencv-python\`, not \`cv2\`). Run \`pip freeze > requirements.txt\` in your project's working environment (or \`uv export --no-hashes -o requirements.txt\` for a uv project), or write one by hand."
+  DEPS_STATUS="requirements.txt $([[ "$GENERATED_REQS_FROM_UV" -eq 1 ]] && echo "present (generated from uv.lock)" || echo present)"
 fi
 
 HAS_DATA_DIR_IN_PROJECT=0

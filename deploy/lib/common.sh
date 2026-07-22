@@ -135,6 +135,34 @@ generate_renv_lock() {
   echo "renv.lock generated at $PROJECT_DIR/renv.lock" >&2
 }
 
+# Dash/Python Shiny/Streamlit: if a project has no requirements.txt but
+# manages its dependencies with uv (a pyproject.toml + uv.lock), generate
+# requirements.txt from the lockfile before the build, rather than failing
+# outright. Unlike generate_renv_lock() this doesn't need BASE_IMAGE's
+# system libraries — uv.lock is already a fully-resolved, pinned dependency
+# set, so `uv export` just reformats it, with no package installation or
+# network resolution involved (--frozen skips checking the lock against
+# pyproject.toml). Uses astral's official uv image rather than BASE_IMAGE
+# for that reason.
+#
+# Reads from the caller: PROJECT_DIR.
+generate_requirements_from_uv() {
+  echo "No requirements.txt found, but this project has a uv.lock — generating" >&2
+  echo "requirements.txt from it..." >&2
+
+  if ! docker run --rm \
+    -v "$(cd "$PROJECT_DIR" && pwd):/app" -w /app \
+    ghcr.io/astral-sh/uv:latest \
+    uv export --no-hashes --frozen -o requirements.txt; then
+    echo "Failed to generate requirements.txt from uv.lock. Run 'uv export --no-hashes -o" >&2
+    echo "requirements.txt' yourself in the project directory (installing uv locally if" >&2
+    echo "needed: https://docs.astral.sh/uv/getting-started/installation/), or write" >&2
+    echo "requirements.txt by hand." >&2
+    exit 1
+  fi
+  echo "requirements.txt generated at $PROJECT_DIR/requirements.txt" >&2
+}
+
 # Assembles a temp build context and runs `docker build`, retrying the whole
 # build a couple of times (transient network hiccups fetching BASE_IMAGE or
 # apt/pip/CRAN packages are common enough across many different projects to
