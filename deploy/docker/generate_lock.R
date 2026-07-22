@@ -31,6 +31,38 @@ dir.create(lib_dir)
 deps <- renv::dependencies(path = project_dir, progress = FALSE)
 required <- unique(deps$Package)
 
+# rocker/geospatial's pinned GDAL is fixed at whatever version it shipped
+# with, but CRAN keeps releasing newer terra versions that assume a newer
+# GDAL API (e.g. GDALMDArray::AsClassicDataset()'s 3-arg overload only
+# exists in GDAL >= 3.8) — so blindly installing CRAN-latest terra can
+# start failing to compile here with no change to the deployed project's
+# own code, only to CRAN. Pin known-compatible versions instead of
+# CRAN-latest for packages in this situation; see docs/deployment.md's
+# "Pinning R package versions" section for how these were derived, and
+# update this table if a newer BASE_IMAGE ships a newer GDAL.
+KNOWN_COMPATIBLE_VERSIONS <- list(
+  terra = list(min_gdal = "3.8.0", pinned_version = "1.8-5")
+)
+
+pin_incompatible_versions <- function(pkgs, lib_dir) {
+  gdal_version <- suppressWarnings(tryCatch(
+    system("gdal-config --version", intern = TRUE),
+    error = function(e) NA_character_
+  ))
+  if (length(gdal_version) != 1 || is.na(gdal_version)) return(invisible())
+  for (pkg in intersect(pkgs, names(KNOWN_COMPATIBLE_VERSIONS))) {
+    spec <- KNOWN_COMPATIBLE_VERSIONS[[pkg]]
+    if (package_version(gdal_version) < spec$min_gdal) {
+      message(sprintf(
+        "GDAL %s detected (< %s) -- pinning %s to %s, a version known to compile against it.",
+        gdal_version, spec$min_gdal, pkg, spec$pinned_version
+      ))
+      renv::install(sprintf("%s@%s", pkg, spec$pinned_version), library = lib_dir, prompt = FALSE)
+    }
+  }
+}
+pin_incompatible_versions(required, lib_dir)
+
 # install.packages() prints errors but returns normally (not an R error
 # condition) on partial failure — e.g. a transient CRAN/mirror timeout — so
 # retries are driven by checking what's still missing afterward, matching
