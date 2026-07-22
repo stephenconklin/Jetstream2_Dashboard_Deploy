@@ -103,23 +103,29 @@ To pin an older, compatible version by hand and get a working build:
    docker run --rm -it -v /path/to/project:/app rocker/geospatial:4.4.1 bash
    cd /app && R
    ```
-2. In R, scaffold `renv` without snapshotting your global library, then install the project's dependencies (working backward through CRAN's archive for any package that fails to compile — see `https://cran.r-project.org/src/contrib/Archive/<package>/` for the version history):
+2. **Do not run `renv::init()` (or anything else that writes `.Rprofile`/`renv/`) inside `/app`.** That scaffold is bind-mounted straight onto the host project directory, and if it's ever left there, `build_and_run.sh` will copy it into the final image (`COPY app/ /srv/shiny-server/`). At runtime, Shiny Server sources that `.Rprofile` and activates a renv project whose package cache was built as `root` during the interactive session — but Shiny Server runs each app as the unprivileged `shiny` user, which can't traverse into `root`'s home directory to follow the cache symlinks. The app fails to start with a misleading `there is no package called 'X'` error for whatever package renv resolved that way, even though the package installed successfully during the build. Install into an isolated library instead, and only ever write `renv.lock` back to the project directory:
    ```r
-   install.packages("renv")
-   renv::init(bare = TRUE)
+   options(repos = c(CRAN = "https://cloud.r-project.org"))
+   if (!requireNamespace("renv", quietly = TRUE)) install.packages("renv")
+
+   lib_dir <- tempfile("renv-lib-")
+   dir.create(lib_dir)
+   .libPaths(c(lib_dir, .libPaths()))
+   ```
+3. Install the project's dependencies with `renv::install()` (not base `install.packages()` — once `renv` is loaded, a raw `install.packages(url, repos = NULL, type = "source")` call can fail with a cryptic `object '..md5..' not found` error). `renv::install()` accepts a `package@version` syntax that resolves directly against CRAN's archive, so there's no need to hand-construct archive URLs:
+   ```r
    # for a package that needs an older, compatible version:
-   install.packages(
-     "https://cran.r-project.org/src/contrib/Archive/terra/terra_1.8-15.tar.gz",
-     repos = NULL, type = "source"
-   )
+   renv::install("terra@1.8-15", library = lib_dir)
    # then the rest of the project's normal library()'d packages as usual
+   renv::install(c("shiny", "sf", "..."), library = lib_dir)
    ```
-3. Once everything loads without error, capture it:
+   If a *different* package's dependency floor later forces `terra` back up to a version that doesn't compile (e.g. `Installation of 'terra@1.8-15' was requested, but ... requires terra >= 1.8-21`), keep testing progressively newer `terra` versions until one both compiles *and* satisfies whatever's demanding a newer floor — or pin that other package to an older version instead, the same way. **Always re-list every version-pinned package explicitly in each subsequent `renv::install()` call** — if you omit it, `renv` will silently re-resolve it to CRAN-latest as an unconstrained transitive dependency and can undo the pin.
+4. Once everything installs without error, snapshot — passing `library` explicitly so `renv` looks at the isolated library, and `lockfile` so it writes only `renv.lock`, not a full project scaffold:
    ```r
-   renv::snapshot()
+   renv::snapshot(project = ".", library = lib_dir, lockfile = "renv.lock", prompt = FALSE)
    ```
-   This writes `renv.lock` into the project directory (visible on the host too, via the bind mount).
-4. Make sure `renv.lock` ships with the deployed project — commit it to the app's own repo if you maintain it, or otherwise just make sure it's present in whatever directory you pass to `build_and_run.sh` (it doesn't need to be tracked by the app's upstream repo; `install_deps.R` only checks whether the file exists on disk at build time).
+   This writes `renv.lock` into the project directory (visible on the host too, via the bind mount) — nothing else.
+5. Make sure `renv.lock` ships with the deployed project — commit it to the app's own repo if you maintain it, or otherwise just make sure it's present in whatever directory you pass to `build_and_run.sh` (it doesn't need to be tracked by the app's upstream repo; `install_deps.R` only checks whether the file exists on disk at build time).
 
 From then on, `install_deps.R` detects the lockfile and calls `renv::restore()` instead of installing CRAN-latest, so rebuilds are reproducible regardless of what CRAN does in the meantime.
 
