@@ -201,8 +201,21 @@ build_image() {
 # mount target instead of hardcoding R Shiny's 3838/srv-shiny-server path.
 # Reads from the caller: CONTAINER_NAME, IMAGE_NAME, INTERNAL_PORT,
 # DATA_DIR, MOUNT_TARGET.
+#
+# Removes by name (in case a stale container with this name exists but isn't
+# running) AND by whatever currently holds host port 80 — since every
+# container binds port 80 unconditionally (one instance = one app), a prior
+# deploy under a *different* name would otherwise be left running and cause
+# "port is already allocated" instead of being cleanly replaced.
 run_container() {
   docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+
+  local port80_containers
+  port80_containers="$(docker ps -aq --filter "publish=80")"
+  if [[ -n "$port80_containers" ]]; then
+    echo "Removing existing container(s) bound to host port 80: $(echo "$port80_containers" | tr '\n' ' ')"
+    docker rm -f $port80_containers >/dev/null
+  fi
 
   local data_mount_args=()
   if [[ -n "$DATA_DIR" ]]; then

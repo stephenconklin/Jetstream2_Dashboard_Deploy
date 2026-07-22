@@ -55,7 +55,7 @@ for arg in "$@"; do
 done
 
 PROJECT_DIR="${POSITIONAL[0]:-$TOOLING_DIR/app}"
-IMAGE_NAME="${POSITIONAL[1]:-shiny-app}"
+IMAGE_NAME="${POSITIONAL[1]:-dashboard-app}"
 CONTAINER_NAME="$IMAGE_NAME"
 DATA_DIR="${DATA_DIR:-}"
 FRAMEWORK="${FRAMEWORK:-}"
