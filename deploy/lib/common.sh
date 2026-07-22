@@ -261,6 +261,25 @@ run_container() {
     "$IMAGE_NAME:latest"
 }
 
+# Best-effort public IP lookup for the final "reachable at" message. Not a
+# Jetstream2/OpenStack metadata call — a floating/public IP is NAT'd onto
+# the instance, so the instance's own metadata service (unlike e.g. AWS's
+# public-ipv4 key) has no way to know it. Asking an external "what's my IP"
+# service is the reliable, provider-agnostic way to get it instead. Tries
+# two such services with a short timeout each, in case one is down; falls
+# back to the old placeholder rather than failing the whole script over a
+# cosmetic message if both are unreachable (e.g. no outbound internet).
+public_ip() {
+  local ip
+  ip="$(curl -fsS --max-time 3 https://api.ipify.org 2>/dev/null)" || \
+    ip="$(curl -fsS --max-time 3 https://ifconfig.me 2>/dev/null)" || true
+  if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "$ip"
+  else
+    echo "<instance-fixed-ip>"
+  fi
+}
+
 # A clean `docker build` + `docker run -d` only proves the image is valid
 # and the container started — not that the app process inside stayed up
 # (e.g. a missing data file or an app error can crash it seconds later).
@@ -278,7 +297,7 @@ run_smoke_test() {
       sleep 2
     done
     if [[ "$smoke_test_ok" -eq 1 ]]; then
-      echo "Container '$CONTAINER_NAME' running and responding. App should be reachable at http://<instance-fixed-ip>/"
+      echo "Container '$CONTAINER_NAME' running and responding. App should be reachable at http://$(public_ip)/"
     else
       echo "Warning: container '$CONTAINER_NAME' started, but never responded on port 80" >&2
       echo "within 60s. This usually means the app process crashed at runtime (e.g. a" >&2
@@ -288,6 +307,7 @@ run_smoke_test() {
       exit 1
     fi
   else
+    # public_ip() itself needs curl, so there's no point calling it here.
     echo "curl not found — skipping post-start smoke test." >&2
     echo "Container '$CONTAINER_NAME' started; verify manually at http://<instance-fixed-ip>/."
   fi
