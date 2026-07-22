@@ -15,7 +15,9 @@
 # before committing to a full build.
 #
 # Optional files the project directory may include:
-#   renv.lock         - (R Shiny) exact package versions to restore (skips dependency scanning)
+#   renv.lock         - (R Shiny) exact package versions to restore (skips dependency scanning).
+#                       If absent, one is generated automatically before the build by installing
+#                       the project's scanned dependencies against BASE_IMAGE and snapshotting.
 #   requirements.txt   - (Dash/Python Shiny/Streamlit) REQUIRED — pip dependencies
 #   apt.txt            - extra system packages (one per line), any framework
 #
@@ -77,14 +79,15 @@ if [[ "$FRAMEWORK" == "r-shiny" ]]; then
 
   HAS_RENV_LOCK=0
   [[ -f "$PROJECT_DIR/renv.lock" ]] && HAS_RENV_LOCK=1
-  DEPS_STATUS="renv.lock $([[ "$HAS_RENV_LOCK" -eq 1 ]] && echo present || echo absent)"
+  DEPS_STATUS="renv.lock $([[ "$HAS_RENV_LOCK" -eq 1 ]] && echo present || echo "absent (will be generated pre-build)")"
 
   if uses_geospatial_packages && [[ "$HAS_RENV_LOCK" -eq 0 ]]; then
     echo "Warning: this project uses geospatial packages (sf/terra/raster/...) but has" >&2
-    echo "no renv.lock, so install_deps.R will install whatever's newest on CRAN. A" >&2
-    echo "future CRAN release of one of these packages could require a newer GDAL/GEOS/PROJ" >&2
-    echo "than $BASE_IMAGE ships and break this build. Consider pinning versions with" >&2
-    echo "renv::snapshot() once you have a working install. See docs/deployment.md." >&2
+    echo "no renv.lock. A renv.lock will be generated automatically below, installing" >&2
+    echo "whatever's newest on CRAN — but a newer release of one of these packages can" >&2
+    echo "need a newer GDAL/GEOS/PROJ than $BASE_IMAGE ships, which would fail that step." >&2
+    echo "See docs/deployment.md's 'Pinning R package versions' section for how to pin an" >&2
+    echo "older, compatible version by hand if that happens." >&2
   fi
 else
   # Dash / Python Shiny / Streamlit: requirements.txt is REQUIRED, not
@@ -109,8 +112,6 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   exit 0
 fi
 
-resolve_data_dir
-
 DOCKERFILE_PATH="$TOOLING_DIR/docker/Dockerfile.$FRAMEWORK"
 EXTRA_BUILD_ARGS=()
 case "$FRAMEWORK" in
@@ -130,6 +131,12 @@ case "$FRAMEWORK" in
     fi
     ;;
 esac
+
+if [[ "$FRAMEWORK" == "r-shiny" && "$HAS_RENV_LOCK" -eq 0 ]]; then
+  generate_renv_lock
+fi
+
+resolve_data_dir
 
 build_image
 
