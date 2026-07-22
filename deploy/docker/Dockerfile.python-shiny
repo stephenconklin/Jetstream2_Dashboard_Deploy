@@ -29,6 +29,15 @@ RUN if [ -s /tmp/apt.txt ]; then \
       && rm -rf /var/lib/apt/lists/*; \
     fi
 
+# Old exact-pinned requirements.txt files (e.g. a `pip freeze` from a few
+# years back) often carry sdists whose setup.py assumes `pkg_resources` is
+# importable — setuptools dropped it in 81.0 (2025-06). pip's build
+# isolation always fetches the latest setuptools for such builds regardless
+# of what's pinned in the project's own requirements.txt, so constrain it
+# below that cutoff to keep old sdists buildable.
+RUN printf 'setuptools<81\n' > /tmp/build-constraints.txt
+ENV PIP_CONSTRAINT=/tmp/build-constraints.txt
+
 # Deps installed before the rest of the app is copied in, so this layer is
 # cached across rebuilds that only change app code, not dependencies.
 # requirements.txt must itself list `shiny` — unlike Dash's gunicorn, the
