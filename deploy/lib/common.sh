@@ -150,10 +150,13 @@ generate_requirements_from_uv() {
   echo "No requirements.txt found, but this project has a uv.lock — generating" >&2
   echo "requirements.txt from it..." >&2
 
+  # ghcr.io/astral-sh/uv's ENTRYPOINT is already `uv`, so the command here
+  # is just its arguments (no leading `uv` — that would be parsed as an
+  # unrecognized `uv uv export` subcommand).
   if ! docker run --rm \
     -v "$(cd "$PROJECT_DIR" && pwd):/app" -w /app \
     ghcr.io/astral-sh/uv:latest \
-    uv export --no-hashes --frozen -o requirements.txt; then
+    export --no-hashes --frozen -o requirements.txt; then
     echo "Failed to generate requirements.txt from uv.lock. Run 'uv export --no-hashes -o" >&2
     echo "requirements.txt' yourself in the project directory (installing uv locally if" >&2
     echo "needed: https://docs.astral.sh/uv/getting-started/installation/), or write" >&2
