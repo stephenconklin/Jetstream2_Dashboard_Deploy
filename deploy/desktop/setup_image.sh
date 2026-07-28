@@ -80,7 +80,11 @@ chown -R "$TARGET_USER":"$TARGET_USER" "$REPO_DIR"
 # pkexec running a file inside a user-writable clone is not a privilege
 # boundary here (the user already has sudo), but a root-owned copy is
 # tidier and is what backend.py prefers.
-install -m 0755 -o root -g root \
+# -D creates the parent directory. /usr/local/libexec does not exist by
+# default on Ubuntu (24.04 included), and plain `install` fails rather than
+# creating it — which, under `set -e`, aborts the whole setup here and
+# leaves the desktop launcher and pre-pulled images undone.
+install -D -m 0755 -o root -g root \
   "$REPO_DIR/deploy/lib/persist_mount.sh" \
   /usr/local/libexec/persist_mount.sh
 echo "Installed /usr/local/libexec/persist_mount.sh"
@@ -94,10 +98,12 @@ TMP_DESKTOP="$(mktemp)"
 sed -e "s#/home/exouser/Jetstream2_Dashboard_Deploy#$REPO_DIR#g" \
     "$DESKTOP_SRC" >"$TMP_DESKTOP"
 
-install -m 0644 "$TMP_DESKTOP" /usr/share/applications/dashboard-deploy.desktop
+# -D again: these directories normally exist, but a minimal image may not
+# have them, and failing here would abort the rest of the setup.
+install -D -m 0644 "$TMP_DESKTOP" /usr/share/applications/dashboard-deploy.desktop
 USER_DESKTOP="$TARGET_HOME/Desktop"
 mkdir -p "$USER_DESKTOP"
-install -m 0755 -o "$TARGET_USER" -g "$TARGET_USER" \
+install -D -m 0755 -o "$TARGET_USER" -g "$TARGET_USER" \
   "$TMP_DESKTOP" "$USER_DESKTOP/dashboard-deploy.desktop"
 rm -f "$TMP_DESKTOP"
 
@@ -125,6 +131,7 @@ done
 # ------------------------------------------------------------------- motd
 echo
 echo "== Login message for SSH users =="
+mkdir -p /etc/update-motd.d
 cat >/etc/update-motd.d/99-dashboard-deploy <<MOTD
 #!/bin/sh
 cat <<'BANNER'

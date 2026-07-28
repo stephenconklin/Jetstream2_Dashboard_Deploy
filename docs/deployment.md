@@ -6,7 +6,7 @@ A single Docker-based workflow for running an app on a Jetstream2 instance, gene
 
 ## Prerequisites
 
-- Jetstream2 instance running **Ubuntu 22.04 (jammy)**, launched via Exosphere.
+- Jetstream2 instance running **Ubuntu 22.04 (jammy) or 24.04 (noble)**, launched via Exosphere. Both are tested; the GUI targets Python 3.10 syntax so it runs on either (24.04 ships 3.12).
 - A fixed/floating IP assigned to the instance.
 - Security group allowing inbound **80/tcp** and **22/tcp**.
 - SSH access as a sudo-capable user (Jetstream2's default `exouser`).
