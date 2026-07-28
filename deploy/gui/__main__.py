@@ -24,8 +24,28 @@ import backend  # noqa: E402
 import ui  # noqa: E402
 
 
+def _apply_icon(root: tk.Tk) -> None:
+    """Give the window its own icon.
+
+    Tk's PhotoImage reads PNG but not SVG, hence the bitmap alongside the
+    scalable one. Purely cosmetic, so any failure is ignored — an icon is
+    never worth refusing to start over.
+    """
+    png = Path(__file__).resolve().parent.parent / "desktop" / "dashboard-deploy.png"
+    try:
+        root._icon = tk.PhotoImage(file=str(png))   # keep a reference alive
+        root.iconphoto(True, root._icon)
+    except Exception:
+        pass
+
+
 def main() -> int:
-    root = tk.Tk()
+    # className sets WM_CLASS, which is what a dock matches against the
+    # StartupWMClass line in dashboard-deploy.desktop. Without a stable
+    # value the window can't be associated with its launcher and the dock
+    # shows a generic icon. Change this and the .desktop together.
+    root = tk.Tk(className="DashboardDeploy")
+    _apply_icon(root)
     root.title("Deploy My Dashboard")
     root.geometry("820x720")
     root.minsize(720, 560)

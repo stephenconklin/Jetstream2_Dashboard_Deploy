@@ -5,8 +5,16 @@ Name=Deploy My Dashboard
 GenericName=Dashboard publisher
 Comment=Publish your R Shiny, Dash, Python Shiny or Streamlit app on this server
 Exec=/home/exouser/Jetstream2_Dashboard_Deploy/deploy/gui/launch_gui.sh
-Icon=/home/exouser/Jetstream2_Dashboard_Deploy/deploy/desktop/dashboard-deploy.svg
+# Icon by NAME, resolved from the hicolor theme that setup_image.sh installs
+# into. An absolute path works for the desktop file itself but is unreliable
+# for the dock, which looks the name up in the icon theme.
+Icon=dashboard-deploy
 Terminal=false
 StartupNotify=true
+# How the dock associates the running window with this launcher. Without it
+# the window can't be matched, and the dock falls back to a generic gear
+# regardless of what Icon= says. Must equal the WM_CLASS that
+# tk.Tk(className=...) sets in __main__.py — change both together.
+StartupWMClass=DashboardDeploy
 Categories=Science;Education;Development;
 Keywords=dashboard;shiny;streamlit;dash;deploy;publish;

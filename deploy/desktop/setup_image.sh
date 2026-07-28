@@ -98,6 +98,15 @@ TMP_DESKTOP="$(mktemp)"
 sed -e "s#/home/exouser/Jetstream2_Dashboard_Deploy#$REPO_DIR#g" \
     "$DESKTOP_SRC" >"$TMP_DESKTOP"
 
+# The icon has to live in the hicolor theme for `Icon=dashboard-deploy` to
+# resolve. A dock looks the name up in the theme rather than following an
+# absolute path, which is why it otherwise falls back to a generic gear.
+install -D -m 0644 "$REPO_DIR/deploy/desktop/dashboard-deploy.svg" \
+  /usr/share/icons/hicolor/scalable/apps/dashboard-deploy.svg
+install -D -m 0644 "$REPO_DIR/deploy/desktop/dashboard-deploy.png" \
+  /usr/share/icons/hicolor/128x128/apps/dashboard-deploy.png
+gtk-update-icon-cache -f -t /usr/share/icons/hicolor 2>/dev/null || true
+
 # -D again: these directories normally exist, but a minimal image may not
 # have them, and failing here would abort the rest of the setup.
 install -D -m 0644 "$TMP_DESKTOP" /usr/share/applications/dashboard-deploy.desktop
@@ -122,6 +131,7 @@ update-desktop-database /usr/share/applications 2>/dev/null || true
 # which is the same anxiety this script exists to remove.
 echo "Installed $USER_DESKTOP/dashboard-deploy.desktop"
 echo "Installed /usr/share/applications/dashboard-deploy.desktop"
+echo "Installed icon into /usr/share/icons/hicolor"
 echo "  launches: $REPO_DIR/deploy/gui/launch_gui.sh"
 
 # ------------------------------------------------------------ base images
