@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Deploy My Dashboard">
+  <rect x="8" y="8" width="112" height="112" rx="18" fill="#1f4e79"/>
+  <!-- a small dashboard: three panels and a rising line -->
+  <rect x="24" y="28" width="34" height="26" rx="4" fill="#8fc7ea"/>
+  <rect x="64" y="28" width="40" height="26" rx="4" fill="#cfe6f6"/>
+  <rect x="24" y="62" width="80" height="38" rx="4" fill="#ffffff"/>
+  <polyline points="32,92 48,80 62,86 78,68 96,72"
+            fill="none" stroke="#1f4e79" stroke-width="5"
+            stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="96" cy="72" r="5" fill="#e8833a"/>
+</svg>

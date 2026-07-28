@@ -37,6 +37,7 @@ FILES=(
   deploy/lint.sh
   deploy/gui/launch_gui.sh
   deploy/gui/run_detached.sh
+  deploy/desktop/setup_image.sh
 )
 
 echo "shellcheck: ${#FILES[@]} files"

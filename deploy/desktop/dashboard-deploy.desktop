@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Deploy My Dashboard
+GenericName=Dashboard publisher
+Comment=Publish your R Shiny, Dash, Python Shiny or Streamlit app on this server
+Exec=/home/exouser/Jetstream2_Dashboard_Deploy/deploy/gui/launch_gui.sh
+Icon=/home/exouser/Jetstream2_Dashboard_Deploy/deploy/desktop/dashboard-deploy.svg
+Terminal=false
+StartupNotify=true
+Categories=Science;Education;Development;
+Keywords=dashboard;shiny;streamlit;dash;deploy;publish;
