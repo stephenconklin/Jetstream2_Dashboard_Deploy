@@ -139,7 +139,8 @@ def _run(cmd: list[str], timeout: int = 120) -> subprocess.CompletedProcess[str]
 
 def inspect_project(project_dir: str | os.PathLike[str],
                     framework: str = "",
-                    container_port: str = "") -> ProjectInfo:
+                    container_port: str = "",
+                    base_image: str = "") -> ProjectInfo:
     """Ask the shell what it would do with this project. No side effects.
 
     ``--dry-run`` is guaranteed read-only: it never starts a container,
@@ -151,6 +152,8 @@ def inspect_project(project_dir: str | os.PathLike[str],
         env_prefix += [f"FRAMEWORK={framework}"]
     if container_port:
         env_prefix += [f"CONTAINER_PORT={container_port}"]
+    if base_image:
+        env_prefix += [f"BASE_IMAGE={base_image}"]
 
     cmd = ["env", *env_prefix, str(BUILD_AND_RUN),
            "--dry-run", "--porcelain", str(project_dir)]
@@ -244,7 +247,8 @@ def find_running_build() -> RunHandle | None:
 def start_deploy(project_dir: str | os.PathLike[str],
                  data_dir: str = "",
                  framework: str = "",
-                 container_port: str = "") -> RunHandle:
+                 container_port: str = "",
+                 base_image: str = "") -> RunHandle:
     """Launch a deploy detached from this process, returning its log handle.
 
     ``data_dir`` must be supplied whenever the project has a ``data/``
@@ -268,6 +272,8 @@ def start_deploy(project_dir: str | os.PathLike[str],
         env["FRAMEWORK"] = framework
     if container_port:
         env["CONTAINER_PORT"] = container_port
+    if base_image:
+        env["BASE_IMAGE"] = base_image
 
     cmd = [str(RUN_DETACHED), str(log_path), str(exit_path),
            str(BUILD_AND_RUN), str(project_dir)]

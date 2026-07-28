@@ -470,6 +470,27 @@ class DeployTab(ttk.Frame):
         ttk.Label(adv, text="App's internal port:").grid(row=0, column=2, sticky="w")
         ttk.Entry(adv, textvariable=self.port_var, width=8).grid(row=0, column=3, padx=PAD)
 
+        # The escape hatch for old projects. A requirements.txt pinning a
+        # package released years ago often cannot build against a current
+        # Python at all, but installs from a prebuilt wheel on the Python it
+        # was written for — so choosing an older base image is frequently the
+        # difference between "won't build" and "works first time". Editable
+        # rather than a fixed list, since R projects need rocker/* values.
+        self.base_image_var = tk.StringVar()
+        ttk.Label(adv, text="Base image:").grid(row=1, column=0, sticky="w",
+                                                pady=(PAD, 0))
+        ttk.Combobox(adv, textvariable=self.base_image_var, width=28,
+                     values=["", "python:3.11-slim", "python:3.10-slim",
+                             "python:3.9-slim", "python:3.8-slim",
+                             "python:3.7-slim", "rocker/r-ver:4.4.1",
+                             "rocker/geospatial:4.4.1"]).grid(
+            row=1, column=1, columnspan=2, sticky="w", padx=PAD, pady=(PAD, 0))
+        ttk.Label(adv,
+                  text="Leave blank unless a dependency won't build — an older "
+                       "Python often fixes an old project.",
+                  foreground="gray40", wraplength=560).grid(
+            row=2, column=0, columnspan=4, sticky="w", pady=(4, 0))
+
         actions = ttk.Frame(self)
         actions.grid(row=2, column=0, sticky="ew", pady=(PAD, 0))
         self.deploy_btn = ttk.Button(actions, text="Publish my dashboard",
@@ -550,7 +571,8 @@ class DeployTab(ttk.Frame):
             self.shared.project_dir,
             data_dir=self.shared.data_dir,
             framework=self.framework_var.get().strip(),
-            container_port=self.port_var.get().strip())
+            container_port=self.port_var.get().strip(),
+            base_image=self.base_image_var.get().strip())
         self._attach(handle)
 
     def _attach(self, handle: backend.RunHandle) -> None:
