@@ -48,6 +48,23 @@ A single Docker-based workflow for running an app on a Jetstream2 instance, gene
    ./deploy/build_and_run.sh --dry-run /path/to/project
    ```
 
+   Adding `--porcelain` (only valid with `--dry-run`) prints the same findings as stable `key=value` lines instead of prose — this is what the GUI consumes, and it's useful for scripting a survey of many projects:
+
+   ```console
+   $ ./deploy/build_and_run.sh --dry-run --porcelain /path/to/project
+   framework=r-shiny
+   entry_point_desc=app.R
+   base_image=rocker/geospatial:4.4.1
+   deps_state=will-generate-renv
+   uses_geospatial=1
+   has_data_dir=1
+   has_apt_txt=0
+   container_port=3838
+   data_mount_target=/srv/shiny-server/data
+   ```
+
+   `deps_state` is one of `present`, `will-generate-renv`, `will-generate-from-uv`, or `missing`. Keys may be added in future versions but existing ones won't be renamed, and warnings stay on stderr so capturing stdout gives a clean stream.
+
 4. Visit `http://<instance-fixed-ip>/` in a browser.
 
 **The optional second argument** is the image/container name (default `dashboard-app`). Docker requires it to be lowercase letters, digits, and `.` `_` `-` separators, starting and ending with a letter or digit — `build_and_run.sh` validates this before doing any work and suggests a corrected name, rather than letting `docker build` reject the tag several steps later.

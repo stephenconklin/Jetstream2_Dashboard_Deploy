@@ -80,6 +80,39 @@ print_dry_run_summary() {
   echo "==========================================="
 }
 
+# The --dry-run summary again, as stable `key=value` lines for programs
+# (the Tkinter GUI in deploy/gui/) instead of prose for people.
+#
+# key=value rather than JSON on purpose: every value here is a single line
+# with no `=` in the key, so parsing is `line.split("=", 1)` and emitting
+# needs no escaping — whereas hand-rolling JSON string escaping in bash is
+# exactly the kind of thing that looks fine until a project path contains a
+# quote or a backslash.
+#
+# The contract this promises to callers:
+#   - keys are stable; new keys may be ADDED, existing ones not renamed
+#   - values are single-line and never quoted
+#   - this goes to stdout alone; warnings still go to stderr, so a caller
+#     capturing stdout gets a clean stream
+#
+# container_port and data_mount_target are included specifically so a caller
+# never hardcodes 3838/8050/8000/8501 or the two mount paths — they come from
+# the same lookup functions the deploy itself uses, above.
+print_dry_run_porcelain() {
+  local deps_state="$1" has_data_dir="$2" has_apt_txt="$3" uses_geospatial="$4"
+  echo "project_dir=$PROJECT_DIR"
+  echo "framework=$FRAMEWORK"
+  echo "entry_file=${ENTRY_FILE:-}"
+  echo "entry_point_desc=$ENTRY_POINT_DESC"
+  echo "base_image=$BASE_IMAGE"
+  echo "deps_state=$deps_state"
+  echo "uses_geospatial=$uses_geospatial"
+  echo "has_data_dir=$has_data_dir"
+  echo "has_apt_txt=$has_apt_txt"
+  echo "container_port=$(container_port_for_framework "$FRAMEWORK")"
+  echo "data_mount_target=$(container_data_mount_target_for_framework "$FRAMEWORK")"
+}
+
 # Data is never baked into the image. If the project ships a data/ directory
 # and the caller hasn't already pointed DATA_DIR at a real location, prompt
 # for one interactively — the app's data must come from a bind-mounted host

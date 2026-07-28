@@ -14,6 +14,12 @@
 # building or running anything. Useful for triaging many candidate projects
 # before committing to a full build.
 #
+# --porcelain: only with --dry-run. Print the same findings as stable
+# `key=value` lines on stdout for programs rather than prose for people —
+# this is what deploy/gui/ consumes so it never has to grep human-readable
+# messages. Keys may be added over time but not renamed; warnings stay on
+# stderr, so capturing stdout alone yields a clean stream.
+#
 # Optional files the project directory may include:
 #   renv.lock         - (R Shiny) exact package versions to restore (skips dependency scanning).
 #                       If absent, one is generated automatically before the build by installing
@@ -67,13 +73,24 @@ source "$TOOLING_DIR/lib/common.sh"
 source "$TOOLING_DIR/lib/detect_framework.sh"
 
 DRY_RUN=0
+PORCELAIN=0
 POSITIONAL=()
 for arg in "$@"; do
   case "$arg" in
-    --dry-run) DRY_RUN=1 ;;
+    --dry-run)   DRY_RUN=1 ;;
+    --porcelain) PORCELAIN=1 ;;
     *) POSITIONAL+=("$arg") ;;
   esac
 done
+
+# --porcelain only modifies the dry-run summary. Rejecting it on the deploy
+# path keeps it from being mistaken for "machine-readable deploy output" —
+# a deploy's output is a live build log that callers stream verbatim, and
+# there's no stable structure to promise there.
+if [[ "$PORCELAIN" -eq 1 && "$DRY_RUN" -eq 0 ]]; then
+  echo "--porcelain is only valid together with --dry-run." >&2
+  exit 1
+fi
 
 PROJECT_DIR="${POSITIONAL[0]:-$TOOLING_DIR/app}"
 IMAGE_NAME="${POSITIONAL[1]:-dashboard-app}"
@@ -107,14 +124,21 @@ detect_framework   # sets FRAMEWORK, ENTRY_POINT_DESC, ENTRY_FILE (Python only)
 # not run containers, write into the project directory, or fail on a
 # condition it's supposed to be *reporting*. Anything with a side effect
 # belongs after the gate.
+# DEPS_STATUS is the human sentence; DEPS_STATE is the same fact as a stable
+# enum for --porcelain consumers, so a GUI never has to grep prose for the
+# word "MISSING". Keep the two in sync whenever either is set.
 DEPS_STATUS=""
+DEPS_STATE=""
 NEEDS_REQS_FROM_UV=0
+# Only meaningful for R Shiny (the geospatial scan has no Python equivalent),
+# but initialized for every framework so --porcelain can print it
+# unconditionally without tripping `set -u`.
+USES_GEOSPATIAL=0
 if [[ "$FRAMEWORK" == "r-shiny" ]]; then
   # R-specific: geospatial base image auto-detection + CRAN-drift warning.
   # No equivalent exists for the Python frameworks (see below).
   # Cached: the scan is a recursive grep over the whole project, and this
   # would otherwise run it twice (once here, once for the warning below).
-  USES_GEOSPATIAL=0
   uses_geospatial_packages && USES_GEOSPATIAL=1
 
   if [[ -z "${BASE_IMAGE:-}" ]]; then
@@ -129,6 +153,7 @@ if [[ "$FRAMEWORK" == "r-shiny" ]]; then
   HAS_RENV_LOCK=0
   [[ -f "$PROJECT_DIR/renv.lock" ]] && HAS_RENV_LOCK=1
   DEPS_STATUS="renv.lock $([[ "$HAS_RENV_LOCK" -eq 1 ]] && echo present || echo "absent (will be generated pre-build)")"
+  DEPS_STATE="$([[ "$HAS_RENV_LOCK" -eq 1 ]] && echo present || echo will-generate-renv)"
 
   if [[ "$USES_GEOSPATIAL" -eq 1 && "$HAS_RENV_LOCK" -eq 0 ]]; then
     echo "Warning: this project uses geospatial packages (sf/terra/raster/...) but has" >&2
@@ -151,11 +176,14 @@ else
   BASE_IMAGE="${BASE_IMAGE:-python:3.11-slim}"
   if [[ -f "$PROJECT_DIR/requirements.txt" ]]; then
     DEPS_STATUS="requirements.txt present"
+    DEPS_STATE="present"
   elif [[ -f "$PROJECT_DIR/uv.lock" ]]; then
     NEEDS_REQS_FROM_UV=1
     DEPS_STATUS="requirements.txt absent (will be generated from uv.lock pre-build)"
+    DEPS_STATE="will-generate-from-uv"
   else
     DEPS_STATUS="requirements.txt MISSING — required for $FRAMEWORK; the build would fail"
+    DEPS_STATE="missing"
   fi
 fi
 
@@ -166,7 +194,11 @@ HAS_APT_TXT=0
 [[ -s "$PROJECT_DIR/apt.txt" ]] && HAS_APT_TXT=1
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
-  print_dry_run_summary "$DEPS_STATUS" "$HAS_DATA_DIR_IN_PROJECT" "$HAS_APT_TXT"
+  if [[ "$PORCELAIN" -eq 1 ]]; then
+    print_dry_run_porcelain "$DEPS_STATE" "$HAS_DATA_DIR_IN_PROJECT" "$HAS_APT_TXT" "$USES_GEOSPATIAL"
+  else
+    print_dry_run_summary "$DEPS_STATUS" "$HAS_DATA_DIR_IN_PROJECT" "$HAS_APT_TXT"
+  fi
   exit 0
 fi
 
