@@ -33,8 +33,20 @@ FILES=(
   deploy/lib/detect_framework.sh
   deploy/docker/apt_retry.sh
   deploy/lint.sh
+  deploy/gui/launch_gui.sh
+  deploy/gui/run_detached.sh
 )
 
 echo "shellcheck: ${#FILES[@]} files"
 shellcheck -x "${FILES[@]}"
 echo "shellcheck: clean"
+
+# The Python GUI has no test suite either; a syntax check is the closest
+# equivalent to what shellcheck gives the shell, and catches the typo class
+# of error before it reaches an instance where there's no terminal to show
+# a traceback.
+if command -v python3 >/dev/null 2>&1; then
+  echo "python: compiling deploy/gui"
+  python3 -m compileall -q deploy/gui
+  echo "python: clean"
+fi
