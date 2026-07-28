@@ -118,6 +118,11 @@ if command -v gio >/dev/null 2>&1; then
     echo "  (could not mark trusted — harmless outside GNOME)"
 fi
 update-desktop-database /usr/share/applications 2>/dev/null || true
+# Say so explicitly: a silent section reads like a section that did nothing,
+# which is the same anxiety this script exists to remove.
+echo "Installed $USER_DESKTOP/dashboard-deploy.desktop"
+echo "Installed /usr/share/applications/dashboard-deploy.desktop"
+echo "  launches: $REPO_DIR/deploy/gui/launch_gui.sh"
 
 # ------------------------------------------------------------ base images
 echo
