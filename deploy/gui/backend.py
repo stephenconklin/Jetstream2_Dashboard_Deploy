@@ -316,6 +316,24 @@ def cancel(handle: RunHandle, grace_seconds: float = 5.0) -> None:
     except ProcessLookupError:
         pass
     handle.reap()
+    _stop_preflight_containers()
+
+
+def _stop_preflight_containers() -> None:
+    """Remove containers the build started but couldn't clean up itself.
+
+    `docker run` is only a client. Killing it leaves the container running
+    on the daemon, and `--rm` never fires because the container never
+    exits — so a cancelled R Shiny build would otherwise leave an renv
+    install consuming CPU on the instance indefinitely. Found and fixed by
+    noticing three orphaned lockfile containers after cancellation tests.
+
+    Named containers, so this removes exactly what the build created.
+    """
+    for suffix in ("lockgen", "uvgen"):
+        subprocess.run(["docker", "rm", "-f", f"{CONTAINER_NAME}-{suffix}"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       check=False)
 
 
 def container_status() -> dict[str, str]:

@@ -77,6 +77,17 @@ One script, [`deploy/build_and_run.sh`](deploy/build_and_run.sh), auto-detects w
 
 When changing a pinned version (Shiny Server, an R/Python base image), keep the relevant Dockerfile's `ARG`/`FROM` line and `docs/deployment.md`'s version notes in sync.
 
+## The desktop GUI (`deploy/gui/`)
+
+A Tkinter front end for researchers, added on top of the shell tooling rather than replacing it. Python 3.10 (Ubuntu 22.04's), **stdlib only, no pip dependencies**.
+
+- **It is a thin layer, and that's load-bearing.** `backend.py` is the *only* module allowed to construct a subprocess command, so "no deployment logic in Python" is checkable by reading one file. Ports, mount targets, framework detection and base-image choice all come back from `--dry-run --porcelain`; never hardcode them in Python. On failure, show the script's stderr **verbatim** — its messages are written for researchers, and this keeps them correct as the shell evolves.
+- **Builds are detached, not children of the GUI.** `run_detached.sh` runs the deploy in its own session writing to `~/dashboard-deploy-logs/`, and the GUI tails that file. Researchers arrive over a remote desktop, so a dropped session would otherwise kill a 25-minute R build. The GUI reattaches on startup via `~/.local/state/dashboard-deploy/current.pid`. Two consequences worth remembering: a cancelled build that had to be SIGKILLed never writes its exit sentinel (the tailer has a fallback for this), and the wrapper is the GUI's own child, so it must be **reaped** or `os.kill(pid, 0)` keeps succeeding on the zombie.
+- **Tk is not thread-safe.** Only the thread that created `root` touches widgets; everything else goes through a `queue.Queue` drained by `root.after()`. Lines per tick and widget scrollback are both capped — an uncapped drain of a geospatial R build freezes the UI just as thoroughly as blocking would.
+- **Never claim success, only liveness.** The post-publish message says the app is live and asks the user to open it. See the smoke-test bullet above for why.
+- **`persist_mount.sh` is a root-only shell script, never Python.** A bad `/etc/fstab` can leave an instance unbootable at a console a remote-desktop user can't reach, so it needs `nofail` and atomic rollback — both trivial in shell, both easy to get wrong spread across GUI callbacks. Escalate with `pkexec`, then passwordless `sudo`, then tell the user the command. **Never** collect a password in a Tk entry and pipe it to `sudo -S`.
+- **`deploy/desktop/setup_image.sh`** prepares the researcher-facing Jetstream2 image. If you add a runtime dependency to the GUI, add it there too — `python3-tk` in particular is not part of `python3` on Ubuntu, and without it the desktop icon does nothing visible at all.
+
 ## Design constraints to keep in mind
 
 - One instance = one app; no multi-tenant/multi-app support is in scope.

@@ -14,6 +14,16 @@ A single Docker-based workflow for running an app on a Jetstream2 instance, gene
 
 ---
 
+## Two ways to use this
+
+**The desktop application** — for researchers. On an instance built from the prepared image, open **Deploy My Dashboard** from the desktop. It walks through choosing your project, getting your data onto the server, publishing, and managing the result, without a terminal. See [The desktop application](#the-desktop-application) below.
+
+**The command line** — everything the application does, it does by running `build_and_run.sh`. If you're comfortable in a shell, use it directly; the two are interchangeable and nothing is hidden from you.
+
+Either way, your project and data have to reach the instance first: see [getting your files onto the instance](getting-your-files-onto-the-instance.md).
+
+---
+
 ## Deploying your app
 
 1. Clone this repo into your home directory on the instance:
@@ -232,6 +242,64 @@ pip freeze > requirements.txt
 ```
 
 Run this inside whatever environment (virtualenv, conda env, or the same base image used for deployment) actually has the app working, so the pinned versions are ones you've confirmed work together. Unlike R's geospatial packages, the 3 Python frameworks and their typical dependencies are mostly pure-Python or ship prebuilt wheels, so version drift against the base image's system libraries is a much rarer problem here — but a project depending on something that compiles from source (e.g. certain `geopandas`/GDAL-adjacent packages) can hit the same class of issue, and the same "pin it explicitly" fix applies.
+
+---
+
+## The desktop application
+
+A Tkinter front end for everything above, aimed at researchers who'd rather not use a terminal. It is a **thin layer**: every action shells out to `build_and_run.sh` or `manage.sh`, so the two paths cannot drift apart, and any error you see is the script's own message rather than a paraphrase.
+
+Start it from the desktop icon, or by hand:
+
+```bash
+./deploy/gui/launch_gui.sh
+```
+
+Four tabs, read left to right:
+
+1. **Your app** — point it at a folder already on the server, clone a Git address, or unpack a `.zip`. It immediately reports the framework it detected and the entry point it found.
+2. **Your data** — choose where your data lives (attached storage volumes are listed first, with free space), pick a transfer route, and verify what arrived. It always shows the host-path → container-path mapping, which is the detail people most often get wrong.
+3. **Publish** — a plain-English readiness summary, then the build with live output. The button stays disabled until the project is actually deployable.
+4. **Manage** — status and URL, the app's own logs, restart, stop, and republish.
+
+Three behaviours worth knowing about:
+
+- **A build survives losing the desktop session.** Builds run detached and write to `~/dashboard-deploy-logs/`; the window only tails that file. If your remote-desktop connection drops mid-build — or you close the window — the build carries on, and reopening the application reattaches to it. Every publish leaves a timestamped log, which is the most useful thing to send if you need help.
+- **It never claims your dashboard is correct.** The post-publish message says the app is *live* and asks you to open it, because the underlying check only proves the app is answering. Shiny and Streamlit render their own errors in the browser and still return HTTP 200 — see the smoke-test note above.
+- **It can make your data volume survive a reboot.** If your data is on a volume that isn't in `/etc/fstab`, the data tab offers to add it, showing the exact line first and asking for an administrator password via the system's own dialog. See [Reboot persistence](#reboot-persistence).
+
+### Reboot persistence
+
+A volume mounted by hand does **not** come back after a reboot. When that happens, Docker silently creates an empty directory at the expected path and mounts that instead, so the dashboard restarts with no data — and because the smoke test only proves liveness, the deploy still reports success.
+
+[`deploy/lib/persist_mount.sh`](../deploy/lib/persist_mount.sh) fixes this by adding an `/etc/fstab` entry. It runs as root (via `pkexec`), and is written defensively because a bad fstab can leave an instance unbootable at an emergency console a remote-desktop user cannot reach:
+
+- `nofail`, so a detached volume never blocks boot, plus `x-systemd.device-timeout=10s`, since `nofail` alone still lets systemd wait 90 seconds for a missing device.
+- The existing file is backed up, then the result is validated with `findmnt --verify` and `mount -a`; if either complains, the backup is restored automatically.
+- `systemctl daemon-reload` before mounting, because systemd caches mount units generated from fstab — skipping it produces the classic "worked when I tested it, did nothing after reboot".
+- Idempotent: an entry for the same UUID *or* mountpoint is reported and left alone, so pressing the button twice cannot create a duplicate.
+
+To do it manually instead:
+
+```bash
+sudo /usr/local/libexec/persist_mount.sh <uuid> /media/volume/<name> ext4
+# check without changing anything (no root needed):
+./deploy/lib/persist_mount.sh --check <uuid> /media/volume/<name>
+```
+
+Afterwards, the only test that really counts is rebooting and confirming the data is still there.
+
+### Building the researcher image
+
+[`deploy/desktop/setup_image.sh`](../deploy/desktop/setup_image.sh) prepares an instance to be saved as the image researchers clone. Run it once on a fresh instance, then create the image in Exosphere:
+
+```bash
+sudo ./deploy/desktop/setup_image.sh
+```
+
+It installs `python3-tk` (**not** part of `python3` on Ubuntu — without it the desktop icon silently does nothing), `policykit-1`, `zenity`, `xdg-utils` and the transfer tools; clones this repo; installs the desktop launcher to both the applications menu and `~/Desktop` with the executable bit *and* GNOME's "trusted" flag; installs `persist_mount.sh` to `/usr/local/libexec`; adds an SSH login banner; and pre-pulls all three base images. That last one matters: `rocker/geospatial` is several GB, and pulling it during a researcher's first publish looks like a ten-minute hang.
+
+It's idempotent, so re-run it to refresh an existing image.
 
 ---
 

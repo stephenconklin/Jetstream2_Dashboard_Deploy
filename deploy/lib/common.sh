@@ -18,6 +18,18 @@ cleanup_build_ctx() {
     rm -rf "$BUILD_CTX"
   fi
   BUILD_CTX=""
+  cleanup_preflight_containers
+}
+
+# `docker run` is only a client: if this script is interrupted, the
+# container it started keeps running on the daemon, and the `--rm` never
+# fires because the container never exits. A cancelled R Shiny build would
+# otherwise leave an renv install consuming CPU indefinitely. The preflight
+# containers are given predictable names precisely so they can be found and
+# removed here.
+cleanup_preflight_containers() {
+  local base="${IMAGE_NAME:-dashboard-app}"
+  docker rm -f "${base}-lockgen" "${base}-uvgen" >/dev/null 2>&1 || true
 }
 # INT/TERM get their own handlers that exit explicitly: a bare signal trap
 # runs the handler and then *resumes* the script, which on Ctrl-C during a
@@ -207,7 +219,15 @@ generate_renv_lock() {
   local run_platform_args=()
   [[ -n "${BUILD_PLATFORM:-}" ]] && run_platform_args=(--platform "$BUILD_PLATFORM")
 
-  if ! docker run --rm \
+  # Named so it can be found and removed if this build is interrupted.
+  # `docker run` is only a client: killing it leaves the container running
+  # on the daemon, and --rm never fires because the container never exits.
+  # A cancelled R build would otherwise leave an renv install burning CPU
+  # on the instance indefinitely.
+  local lockgen_name="${real_image_name}-lockgen"
+  docker rm -f "$lockgen_name" >/dev/null 2>&1 || true
+
+  if ! docker run --rm --name "$lockgen_name" \
     "${run_platform_args[@]+"${run_platform_args[@]}"}" \
     -v "$(cd "$PROJECT_DIR" && pwd):/app" \
     -v "$TOOLING_DIR/docker/generate_lock.R:/tmp/generate_lock.R:ro" \
@@ -247,7 +267,11 @@ generate_requirements_from_uv() {
   # ghcr.io/astral-sh/uv's ENTRYPOINT is already `uv`, so the command here
   # is just its arguments (no leading `uv` — that would be parsed as an
   # unrecognized `uv uv export` subcommand).
-  if ! docker run --rm \
+  # Named for the same reason as the lockfile container above.
+  local uvgen_name="${IMAGE_NAME:-dashboard-app}-uvgen"
+  docker rm -f "$uvgen_name" >/dev/null 2>&1 || true
+
+  if ! docker run --rm --name "$uvgen_name" \
     -v "$(cd "$PROJECT_DIR" && pwd):/app" -w /app \
     ghcr.io/astral-sh/uv:latest \
     export --no-hashes --frozen -o requirements.txt; then

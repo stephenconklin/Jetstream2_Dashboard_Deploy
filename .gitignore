@@ -20,3 +20,9 @@ Jetstream2_Dashboard_Deploy.code-workspace
 # *-hello-world fixtures, these are separate upstream repos (with their own
 # .git/ and license) and shouldn't be nested into this one.
 examples/WORKSHOP-interactive-shiny-dashboards/
+
+# build_and_run.sh writes a renv.lock into whatever project it deploys.
+# The bundled R example deliberately ships WITHOUT one so that smoke-testing
+# it exercises the auto-generation path — so running the documented test
+# shouldn't leave the tree dirty.
+examples/*/renv.lock
