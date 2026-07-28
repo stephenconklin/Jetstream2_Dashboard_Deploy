@@ -70,7 +70,9 @@ detect_dash() {
   local pyfile
   for pyfile in "$PROJECT_DIR"/*.py; do
     [[ -f "$pyfile" ]] || continue
-    if grep -qE 'import[[:space:]]+dash|from[[:space:]]+dash[[:space:]]+import|Dash\(|server[[:space:]]*=[[:space:]]*app\.server' "$pyfile"; then
+    # \b after `dash` matters: without it, `import dashscope` or
+    # `import dashboard_utils` would false-positive as a Dash project.
+    if grep -qE 'import[[:space:]]+dash\b|from[[:space:]]+dash\b|Dash\(|server[[:space:]]*=[[:space:]]*app\.server' "$pyfile"; then
       ENTRY_FILE="$(basename "$pyfile")"
       return 0
     fi
@@ -104,14 +106,14 @@ detect_python_shiny() {
 # first so an unrelated file with that name doesn't false-positive.
 detect_streamlit() {
   if [[ -f "$PROJECT_DIR/streamlit_app.py" ]] \
-     && grep -qE 'import[[:space:]]+streamlit' "$PROJECT_DIR/streamlit_app.py"; then
+     && grep -qE 'import[[:space:]]+streamlit\b|from[[:space:]]+streamlit\b' "$PROJECT_DIR/streamlit_app.py"; then
     ENTRY_FILE="streamlit_app.py"
     return 0
   fi
   local pyfile
   for pyfile in "$PROJECT_DIR"/*.py; do
     [[ -f "$pyfile" ]] || continue
-    if grep -qE 'import[[:space:]]+streamlit' "$pyfile"; then
+    if grep -qE 'import[[:space:]]+streamlit\b|from[[:space:]]+streamlit\b' "$pyfile"; then
       ENTRY_FILE="$(basename "$pyfile")"
       return 0
     fi
@@ -120,13 +122,70 @@ detect_streamlit() {
 }
 
 # --- Orchestrator ----------------------------------------------------------
+# The 4 values FRAMEWORK may take, shared by the override validation below
+# and the error messages that suggest setting it.
+SUPPORTED_FRAMEWORKS=(r-shiny dash python-shiny streamlit)
+
+# A forced FRAMEWORK bypasses *framework* detection, but the Python
+# frameworks still need ENTRY_FILE resolved — it becomes the ENTRY_MODULE
+# build-arg, and without it the Dockerfile's ARG default silently wins. For
+# Streamlit that default is `streamlit_app.py`, so forcing the framework on
+# a project whose entry is `app.py` used to build successfully and then
+# crash-loop with "File does not exist: streamlit_app.py". Try the same
+# content-based detector first (it also confirms the forced choice looks
+# right), then fall back to the framework's conventional filenames.
+resolve_forced_entry_file() {
+  local framework="$1" candidate
+  case "$framework" in
+    dash)         detect_dash         || true ;;
+    python-shiny) detect_python_shiny || true ;;
+    streamlit)    detect_streamlit    || true ;;
+    r-shiny)      return 0 ;;   # entry point is a convention, not a build-arg
+  esac
+
+  if [[ -z "$ENTRY_FILE" ]]; then
+    local candidates=()
+    case "$framework" in
+      streamlit) candidates=(streamlit_app.py app.py) ;;
+      *)         candidates=(app.py) ;;
+    esac
+    for candidate in "${candidates[@]}"; do
+      if [[ -f "$PROJECT_DIR/$candidate" ]]; then
+        ENTRY_FILE="$candidate"
+        echo "FRAMEWORK=$framework was forced; no $framework signal found in the project's" >&2
+        echo ".py files, so falling back to $candidate as the entry point." >&2
+        return 0
+      fi
+    done
+    echo "FRAMEWORK=$framework was forced, but no usable entry point was found in" >&2
+    echo "$PROJECT_DIR — expected one of: ${candidates[*]}." >&2
+    exit 1
+  fi
+}
+
 # Sets FRAMEWORK, ENTRY_POINT_DESC, and (Python frameworks) ENTRY_FILE.
 # An explicit FRAMEWORK env var (mirroring BASE_IMAGE's override pattern)
-# bypasses detection entirely — the escape hatch for ambiguous projects or
-# a wrong guess.
+# bypasses framework detection — the escape hatch for ambiguous projects or
+# a wrong guess — but is still validated against the supported set, since a
+# typo (e.g. FRAMEWORK=Dash) would otherwise surface much later as a raw
+# "cp: Dockerfile.Dash: No such file" from inside build_image().
 detect_framework() {
   if [[ -n "${FRAMEWORK:-}" ]]; then
-    ENTRY_POINT_DESC="(forced via FRAMEWORK=$FRAMEWORK)"
+    local supported valid=0
+    for supported in "${SUPPORTED_FRAMEWORKS[@]}"; do
+      [[ "$FRAMEWORK" == "$supported" ]] && valid=1
+    done
+    if [[ "$valid" -ne 1 ]]; then
+      echo "Unknown FRAMEWORK='$FRAMEWORK'." >&2
+      echo "Supported values: ${SUPPORTED_FRAMEWORKS[*]}" >&2
+      exit 1
+    fi
+    resolve_forced_entry_file "$FRAMEWORK"
+    if [[ -n "$ENTRY_FILE" ]]; then
+      ENTRY_POINT_DESC="$ENTRY_FILE (forced via FRAMEWORK=$FRAMEWORK)"
+    else
+      ENTRY_POINT_DESC="(forced via FRAMEWORK=$FRAMEWORK)"
+    fi
     return 0
   fi
 

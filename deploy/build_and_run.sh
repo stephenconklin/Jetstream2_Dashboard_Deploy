@@ -34,6 +34,12 @@
 #                  project's .R/.Rmd files use sf/terra/raster/stars/rgdal/rgeos,
 #                  otherwise rocker/r-ver:4.4.1 (bare R).
 #                - Dash/Python Shiny/Streamlit: python:3.11-slim.
+#   BUILD_PLATFORM - override the `docker build --platform` target. Normally
+#                unset: the 3 Python frameworks build natively on any
+#                architecture, and R Shiny auto-selects linux/amd64 when the
+#                Docker host isn't amd64, since Shiny Server is published as
+#                an amd64-only .deb (relevant when testing on an Apple
+#                Silicon Mac; Jetstream2 instances are x86_64).
 #   DATA_DIR   - host path (e.g. a mounted Jetstream2 storage volume, typically
 #                under /media/volume/<volume-name>/...) bind-mounted into the
 #                container AND passed as a DATA_DIR container env var. Data is
@@ -68,12 +74,23 @@ ENTRY_POINT_DESC=""
 
 detect_framework   # sets FRAMEWORK, ENTRY_POINT_DESC, ENTRY_FILE (Python only)
 
+# Everything from here to the --dry-run gate below must stay side-effect
+# free: --dry-run's whole purpose is triaging candidate projects, so it must
+# not run containers, write into the project directory, or fail on a
+# condition it's supposed to be *reporting*. Anything with a side effect
+# belongs after the gate.
 DEPS_STATUS=""
+NEEDS_REQS_FROM_UV=0
 if [[ "$FRAMEWORK" == "r-shiny" ]]; then
   # R-specific: geospatial base image auto-detection + CRAN-drift warning.
   # No equivalent exists for the Python frameworks (see below).
-  if [[ -z "${BASE_IMAGE+set}" ]]; then
-    if uses_geospatial_packages; then
+  # Cached: the scan is a recursive grep over the whole project, and this
+  # would otherwise run it twice (once here, once for the warning below).
+  USES_GEOSPATIAL=0
+  uses_geospatial_packages && USES_GEOSPATIAL=1
+
+  if [[ -z "${BASE_IMAGE:-}" ]]; then
+    if [[ "$USES_GEOSPATIAL" -eq 1 ]]; then
       BASE_IMAGE="rocker/geospatial:4.4.1"
       echo "Detected geospatial packages (sf/terra/raster/...) — using BASE_IMAGE=$BASE_IMAGE" >&2
     else
@@ -85,7 +102,7 @@ if [[ "$FRAMEWORK" == "r-shiny" ]]; then
   [[ -f "$PROJECT_DIR/renv.lock" ]] && HAS_RENV_LOCK=1
   DEPS_STATUS="renv.lock $([[ "$HAS_RENV_LOCK" -eq 1 ]] && echo present || echo "absent (will be generated pre-build)")"
 
-  if uses_geospatial_packages && [[ "$HAS_RENV_LOCK" -eq 0 ]]; then
+  if [[ "$USES_GEOSPATIAL" -eq 1 && "$HAS_RENV_LOCK" -eq 0 ]]; then
     echo "Warning: this project uses geospatial packages (sf/terra/raster/...) but has" >&2
     echo "no renv.lock. A renv.lock will be generated automatically below, installing" >&2
     echo "whatever's newest on CRAN — but a newer release of one of these packages can" >&2
@@ -101,16 +118,17 @@ else
   # no safe fallback if it's missing. The one exception: a project managed
   # with uv (pyproject.toml + uv.lock) already has a fully-resolved,
   # pinned dependency set under a different name — generate requirements.txt
-  # from it rather than failing.
+  # from it rather than failing (done after the dry-run gate, since it
+  # writes into the project directory).
   BASE_IMAGE="${BASE_IMAGE:-python:3.11-slim}"
-  GENERATED_REQS_FROM_UV=0
-  if [[ ! -f "$PROJECT_DIR/requirements.txt" && -f "$PROJECT_DIR/uv.lock" ]]; then
-    generate_requirements_from_uv
-    GENERATED_REQS_FROM_UV=1
+  if [[ -f "$PROJECT_DIR/requirements.txt" ]]; then
+    DEPS_STATUS="requirements.txt present"
+  elif [[ -f "$PROJECT_DIR/uv.lock" ]]; then
+    NEEDS_REQS_FROM_UV=1
+    DEPS_STATUS="requirements.txt absent (will be generated from uv.lock pre-build)"
+  else
+    DEPS_STATUS="requirements.txt MISSING — required for $FRAMEWORK; the build would fail"
   fi
-  require_file_or_fail "$PROJECT_DIR/requirements.txt" "$FRAMEWORK" \
-    "Unlike R (which can fall back to scanning your code), Python has no reliable way to auto-detect package names from import statements (e.g. \`import cv2\` comes from the PyPI package \`opencv-python\`, not \`cv2\`). Run \`pip freeze > requirements.txt\` in your project's working environment (or \`uv export --no-hashes -o requirements.txt\` for a uv project), or write one by hand."
-  DEPS_STATUS="requirements.txt $([[ "$GENERATED_REQS_FROM_UV" -eq 1 ]] && echo "present (generated from uv.lock)" || echo present)"
 fi
 
 HAS_DATA_DIR_IN_PROJECT=0
@@ -122,6 +140,14 @@ HAS_APT_TXT=0
 if [[ "$DRY_RUN" -eq 1 ]]; then
   print_dry_run_summary "$DEPS_STATUS" "$HAS_DATA_DIR_IN_PROJECT" "$HAS_APT_TXT"
   exit 0
+fi
+
+# --- Past this point, side effects are allowed. ---------------------------
+
+if [[ "$FRAMEWORK" != "r-shiny" ]]; then
+  [[ "$NEEDS_REQS_FROM_UV" -eq 1 ]] && generate_requirements_from_uv
+  require_file_or_fail "$PROJECT_DIR/requirements.txt" "$FRAMEWORK" \
+    "Unlike R (which can fall back to scanning your code), Python has no reliable way to auto-detect package names from import statements (e.g. \`import cv2\` comes from the PyPI package \`opencv-python\`, not \`cv2\`). Run \`pip freeze > requirements.txt\` in your project's working environment (or \`uv export --no-hashes -o requirements.txt\` for a uv project), or write one by hand."
 fi
 
 DOCKERFILE_PATH="$TOOLING_DIR/docker/Dockerfile.$FRAMEWORK"
@@ -142,13 +168,27 @@ case "$FRAMEWORK" in
       EXTRA_BUILD_ARGS+=(--build-arg "ENTRY_MODULE=$ENTRY_FILE")
     fi
     ;;
+  *)
+    # detect_framework() validates FRAMEWORK against the supported set, so
+    # reaching here means a new framework was added there without a matching
+    # arm being added here.
+    echo "Internal error: no build configuration for framework '$FRAMEWORK'." >&2
+    exit 1
+    ;;
 esac
+
+# Before generate_renv_lock(), not after: that step runs a full `docker
+# build` of the deps-base stage, and build_image() only prunes the project's
+# data/ from the build context once DATA_DIR is known. Resolving it first
+# keeps a multi-GB data/ out of *both* build contexts, and surfaces the
+# interactive prompt before a long build rather than after it.
+resolve_data_dir
+
+resolve_build_platform
 
 if [[ "$FRAMEWORK" == "r-shiny" && "$HAS_RENV_LOCK" -eq 0 ]]; then
   generate_renv_lock
 fi
-
-resolve_data_dir
 
 build_image
 

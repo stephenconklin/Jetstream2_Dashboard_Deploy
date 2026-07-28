@@ -55,10 +55,7 @@ RUN apt_retry.sh \
 # for magick) that BASE_IMAGE doesn't already provide. One package name per
 # line in the project's apt.txt; leave it empty if none are needed.
 COPY app/apt.txt /tmp/apt.txt
-RUN if [ -s /tmp/apt.txt ]; then \
-      apt_retry.sh $(cat /tmp/apt.txt) \
-      && rm -rf /var/lib/apt/lists/*; \
-    fi
+RUN apt_retry.sh --from-file /tmp/apt.txt && rm -rf /var/lib/apt/lists/*
 
 FROM deps-base AS final
 

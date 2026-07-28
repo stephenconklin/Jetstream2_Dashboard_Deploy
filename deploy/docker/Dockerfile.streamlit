@@ -27,10 +27,7 @@ RUN apt_retry.sh git build-essential && rm -rf /var/lib/apt/lists/*
 # dependency) that BASE_IMAGE doesn't already provide. One package name per
 # line in the project's apt.txt; leave it empty if none are needed.
 COPY app/apt.txt /tmp/apt.txt
-RUN if [ -s /tmp/apt.txt ]; then \
-      apt_retry.sh $(cat /tmp/apt.txt) \
-      && rm -rf /var/lib/apt/lists/*; \
-    fi
+RUN apt_retry.sh --from-file /tmp/apt.txt && rm -rf /var/lib/apt/lists/*
 
 # Old exact-pinned requirements.txt files (e.g. a `pip freeze` from a few
 # years back) often carry sdists whose setup.py assumes `pkg_resources` is
@@ -48,6 +45,10 @@ ENV PIP_CONSTRAINT=/tmp/build-constraints.txt
 COPY app/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Build-time only: unset so a runtime `pip install` inside the container
+# isn't silently constrained by a build workaround.
+ENV PIP_CONSTRAINT=
+
 COPY app/ .
 RUN rm -f apt.txt
 
@@ -59,4 +60,9 @@ EXPOSE ${PORT}
 # (No HEALTHCHECK here — python:3.11-slim doesn't ship curl, and
 # build_and_run.sh already smoke-tests the app from the host after startup.)
 
-CMD sh -c "streamlit run ${ENTRY_MODULE} --server.port=${PORT} --server.address=0.0.0.0"
+# Exec form + `exec` so the app replaces the shell as PID 1 and receives
+# SIGTERM directly. With the previous shell-form CMD, PID 1 was /bin/sh,
+# which does not forward signals — `docker stop`/`docker restart` hung for
+# the full 10s timeout and then SIGKILLed the app, with no chance for a
+# graceful shutdown. `sh -c` still expands the env vars below at runtime.
+CMD ["sh", "-c", "exec streamlit run ${ENTRY_MODULE} --server.port=${PORT} --server.address=0.0.0.0"]

@@ -17,6 +17,26 @@ for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.l
   [ -f "$f" ] && sed -i 's#http://#https://#g' "$f"
 done
 
+# `apt_retry.sh --from-file <path>` reads package names from a project's
+# apt.txt instead of taking them as arguments. Centralized here rather than
+# repeated in all 4 Dockerfiles, and sanitizing rather than passing the file
+# through raw, because researchers' apt.txt files routinely arrive with:
+#   - CRLF line endings (edited on Windows) — apt then reports "Unable to
+#     locate package curl" for a correctly-spelled `curl\r`, naming the
+#     package the user typed and giving no hint that the ending is at fault;
+#   - `# comment` lines, which are natural to write and which apt otherwise
+#     tries to install as literal packages named `#`, `a`, `comment`, ...
+# Exits 0 when the file is absent or has no package names, so an empty
+# apt.txt stays a no-op.
+if [ "$1" = "--from-file" ]; then
+  apt_txt="$2"
+  [ -f "$apt_txt" ] || exit 0
+  # Unquoted on purpose: word-splitting one-package-per-line into "$@".
+  # shellcheck disable=SC2046
+  set -- $(sed -e 's/\r$//' -e 's/#.*//' "$apt_txt")
+  [ "$#" -eq 0 ] && exit 0
+fi
+
 for i in 1 2 3; do
   if apt-get update && apt-get install -y --no-install-recommends "$@"; then
     exit 0

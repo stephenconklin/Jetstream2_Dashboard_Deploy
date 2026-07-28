@@ -7,6 +7,25 @@
 # IMAGE_NAME, BASE_IMAGE, DATA_DIR, etc.) rather than taking everything as
 # positional args, matching the rest of this script's style.
 
+# Temp build context created by build_image(), tracked globally so it gets
+# cleaned up however the script ends. A RETURN trap (the previous approach)
+# doesn't fire on `exit`, so every failure path — a failed docker build, a
+# failed cp — leaked a full copy of the project into /tmp. An EXIT trap
+# covers returns, exits, and Ctrl-C alike.
+BUILD_CTX=""
+cleanup_build_ctx() {
+  if [[ -n "${BUILD_CTX:-}" && -d "${BUILD_CTX:-}" ]]; then
+    rm -rf "$BUILD_CTX"
+  fi
+  BUILD_CTX=""
+}
+# INT/TERM get their own handlers that exit explicitly: a bare signal trap
+# runs the handler and then *resumes* the script, which on Ctrl-C during a
+# docker build would fall through into the retry loop instead of stopping.
+trap cleanup_build_ctx EXIT
+trap 'cleanup_build_ctx; exit 130' INT
+trap 'cleanup_build_ctx; exit 143' TERM
+
 # Internal container port each framework's server listens on by default.
 # `docker run -p 80:$PORT` and each Dockerfile's `--build-arg PORT=$PORT`
 # both draw from this single source of truth. A `case` (not a bash-4
@@ -97,6 +116,34 @@ resolve_data_dir() {
   fi
 }
 
+# Posit publishes Shiny Server as an amd64-only .deb, so Dockerfile.r-shiny
+# can only build on amd64 — on an arm64 host (an Apple Silicon laptop, most
+# commonly) `gdebi` refuses the package and the build dies at the Shiny
+# Server step, several minutes in, with an error that doesn't mention
+# architecture at all. Jetstream2 instances are x86_64, so this never bites
+# in production; it bites when testing a change locally before deploying.
+# Building through emulation is slow but it works, and it's strictly better
+# than the framework being untestable off-x86_64. Only applies to r-shiny —
+# the 3 Python frameworks build natively on either architecture. Set
+# BUILD_PLATFORM explicitly to override.
+#
+# Reads FRAMEWORK from the caller; sets BUILD_PLATFORM.
+resolve_build_platform() {
+  BUILD_PLATFORM="${BUILD_PLATFORM:-}"
+  [[ -n "$BUILD_PLATFORM" ]] && return 0
+  [[ "$FRAMEWORK" == "r-shiny" ]] || return 0
+
+  local server_arch
+  server_arch="$(docker version --format '{{.Server.Arch}}' 2>/dev/null)" || server_arch=""
+  if [[ -n "$server_arch" && "$server_arch" != "amd64" ]]; then
+    BUILD_PLATFORM="linux/amd64"
+    echo "Note: this Docker host is $server_arch, but Shiny Server is only published as an" >&2
+    echo "amd64 .deb — building with --platform linux/amd64 under emulation. Expect a" >&2
+    echo "significantly slower build. (Jetstream2 instances are x86_64, so this only" >&2
+    echo "affects local testing.) Set BUILD_PLATFORM to override." >&2
+  fi
+}
+
 # R Shiny only: if the project has no renv.lock, generate one before the
 # real `docker build`, by building Dockerfile.r-shiny's `deps-base` stage
 # (the same apt/compile-header environment the real build uses) and running
@@ -122,7 +169,13 @@ generate_renv_lock() {
   IMAGE_NAME="$real_image_name"
   BUILD_TARGET=""
 
+  # Must match the platform the deps-base image was just built for, or
+  # Docker silently runs it under a different arch (or refuses to start it).
+  local run_platform_args=()
+  [[ -n "${BUILD_PLATFORM:-}" ]] && run_platform_args=(--platform "$BUILD_PLATFORM")
+
   if ! docker run --rm \
+    "${run_platform_args[@]+"${run_platform_args[@]}"}" \
     -v "$(cd "$PROJECT_DIR" && pwd):/app" \
     -v "$TOOLING_DIR/docker/generate_lock.R:/tmp/generate_lock.R:ro" \
     "${real_image_name}-deps-base:latest" \
@@ -130,9 +183,17 @@ generate_renv_lock() {
     echo "Failed to generate renv.lock. See docs/deployment.md's 'Pinning R package" >&2
     echo "versions' section for how to resolve a compile failure (e.g. a package needing" >&2
     echo "a newer system library than $BASE_IMAGE ships) by pinning an older version by hand." >&2
+    echo "(Leaving the ${real_image_name}-deps-base image in place for debugging — remove" >&2
+    echo "it with 'docker rmi ${real_image_name}-deps-base:latest' once you're done.)" >&2
     exit 1
   fi
   echo "renv.lock generated at $PROJECT_DIR/renv.lock" >&2
+
+  # This preflight tag is scaffolding, not something to keep — untag it so
+  # it doesn't accumulate one stale image per R project deployed. The
+  # underlying layers stay in Docker's build cache, so the real build below
+  # still reuses them; they just become prunable rather than permanent.
+  docker rmi "${real_image_name}-deps-base:latest" >/dev/null 2>&1 || true
 }
 
 # Dash/Python Shiny/Streamlit: if a project has no requirements.txt but
@@ -181,15 +242,8 @@ generate_requirements_from_uv() {
 # last stage) to build a named stage instead — used by generate_renv_lock()
 # below to build just Dockerfile.r-shiny's `deps-base` stage.
 build_image() {
-  local build_ctx
-  build_ctx="$(mktemp -d)"
-  # A RETURN trap isn't scoped to the function that set it — it persists in
-  # the shell and fires on every subsequent function return until cleared.
-  # build_image() can be called more than once per script run (once for
-  # generate_renv_lock()'s deps-base stage, once for the real build), so the
-  # trap clears itself right after firing, or a later, unrelated function
-  # return would try to rm -rf this now out-of-scope $build_ctx again.
-  trap 'rm -rf "$build_ctx"; trap - RETURN' RETURN
+  BUILD_CTX="$(mktemp -d)"
+  local build_ctx="$BUILD_CTX"
 
   cp "$DOCKERFILE_PATH" "$build_ctx/Dockerfile"
   local f
@@ -197,14 +251,50 @@ build_image() {
     cp "$TOOLING_DIR/docker/$f" "$build_ctx/"
   done
   mkdir -p "$build_ctx/app"
-  cp -R "$PROJECT_DIR"/. "$build_ctx/app/"
-  if [[ -n "$DATA_DIR" ]]; then
-    rm -rf "$build_ctx/app/data"   # served from DATA_DIR at runtime instead
-  fi
+
+  # Copy via tar rather than `cp -R` so junk can be excluded *during* the
+  # copy instead of deleted afterward. This matters most for data/: these
+  # projects routinely carry multi-GB datasets, and copying one into a temp
+  # build context only to delete it (and, for the R deps-base preflight,
+  # not deleting it at all) both fills the disk and stalls the build while
+  # Docker uploads the context to the daemon. The VCS/venv/cache excludes
+  # are the same idea for correctness rather than size: `COPY app/ .` would
+  # otherwise bake .git history and any stray .env into the image layers.
+  local exclude_args=(
+    --exclude=./.git
+    --exclude=./.venv
+    --exclude=./venv
+    --exclude=./__pycache__
+    --exclude=./.Rproj.user
+    --exclude=./node_modules
+    --exclude=./.DS_Store
+    --exclude=./.env
+  )
+  # Data is bind-mounted from DATA_DIR at runtime, never baked in.
+  [[ -n "$DATA_DIR" ]] && exclude_args+=(--exclude=./data)
+  tar -cf - -C "$PROJECT_DIR" "${exclude_args[@]}" . | tar -xf - -C "$build_ctx/app"
+
   touch "$build_ctx/app/apt.txt"   # harmless no-op if the project already has one
+
+  # Belt-and-braces against the excludes above drifting out of sync with
+  # what the Dockerfiles COPY — .dockerignore is enforced by the daemon.
+  cat > "$build_ctx/.dockerignore" <<'DOCKERIGNORE'
+**/.git
+**/.venv
+**/venv
+**/__pycache__
+**/*.pyc
+**/.Rproj.user
+**/node_modules
+**/.DS_Store
+**/.env
+DOCKERIGNORE
 
   local target_args=()
   [[ -n "${BUILD_TARGET:-}" ]] && target_args=(--target "$BUILD_TARGET")
+
+  local platform_args=()
+  [[ -n "${BUILD_PLATFORM:-}" ]] && platform_args=(--platform "$BUILD_PLATFORM")
 
   local build_tries=3 attempt build_ok=0
   for attempt in $(seq 1 "$build_tries"); do
@@ -212,6 +302,7 @@ build_image() {
       --build-arg BASE_IMAGE="$BASE_IMAGE" \
       "${EXTRA_BUILD_ARGS[@]+"${EXTRA_BUILD_ARGS[@]}"}" \
       "${target_args[@]+"${target_args[@]}"}" \
+      "${platform_args[@]+"${platform_args[@]}"}" \
       -t "$IMAGE_NAME:latest" \
       "$build_ctx"; then
       build_ok=1
@@ -224,8 +315,10 @@ build_image() {
   done
   if [[ "$build_ok" -ne 1 ]]; then
     echo "docker build failed after $build_tries attempts." >&2
-    exit 1
+    exit 1   # EXIT trap cleans up $BUILD_CTX
   fi
+
+  cleanup_build_ctx
 }
 
 # `docker rm -f` + `docker run -d`, parameterized by internal port and data
@@ -253,7 +346,14 @@ run_container() {
     data_mount_args=(-v "$(cd "$DATA_DIR" && pwd):$MOUNT_TARGET" -e "DATA_DIR=$MOUNT_TARGET")
   fi
 
+  # Match the platform the image was built for, or Docker prints a "requested
+  # image's platform does not match the detected host platform" warning on
+  # every start of an emulated (r-shiny-on-arm64) image.
+  local run_platform_args=()
+  [[ -n "${BUILD_PLATFORM:-}" ]] && run_platform_args=(--platform "$BUILD_PLATFORM")
+
   docker run -d \
+    "${run_platform_args[@]+"${run_platform_args[@]}"}" \
     --name "$CONTAINER_NAME" \
     --restart unless-stopped \
     -p 80:"$INTERNAL_PORT" \
@@ -290,7 +390,11 @@ run_smoke_test() {
   if command -v curl >/dev/null 2>&1; then
     local smoke_test_ok=0 i
     for i in $(seq 1 30); do
-      if curl -fsS -o /dev/null "http://localhost:80/"; then
+      # 2>/dev/null: -S would otherwise print "curl: (7) Failed to connect"
+      # on every poll while the app is still starting — up to 30 alarming
+      # error lines during an ordinary, successful startup. A genuine
+      # failure is reported by the branch below, with the container's logs.
+      if curl -fsS -o /dev/null "http://localhost:80/" 2>/dev/null; then
         smoke_test_ok=1
         break
       fi

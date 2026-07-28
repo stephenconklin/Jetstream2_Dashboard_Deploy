@@ -15,3 +15,8 @@ deploy/app/*
 
 # VS Code Project File
 Jetstream2_Dashboard_Deploy.code-workspace
+
+# Real-world projects cloned into examples/ for testing. Unlike the
+# *-hello-world fixtures, these are separate upstream repos (with their own
+# .git/ and license) and shouldn't be nested into this one.
+examples/WORKSHOP-interactive-shiny-dashboards/
