@@ -41,7 +41,16 @@ Triage a project without building anything (reports detected framework, entry po
 ./deploy/build_and_run.sh --dry-run /path/to/project
 ```
 
-There's no CI, test suite, or linter in this repo — verifying a change means actually running the command above (or reasoning carefully through the shell script / Dockerfile logic, since a real run requires Docker).
+Lint the shell scripts (the only automated check in the repo):
+
+```bash
+./deploy/lint.sh                      # shellcheck -x over every tracked .sh
+git config core.hooksPath .githooks   # one-time: run it automatically pre-commit
+```
+
+There's no CI and no test suite — beyond `lint.sh`, verifying a change means actually running one of the commands above (or reasoning carefully through the shell script / Dockerfile logic, since a real run requires Docker). Note `lint.sh` catches shell defects only; it says nothing about whether an image builds or an app starts.
+
+Two shellcheck conventions worth knowing before editing these scripts: `build_and_run.sh` carries a file-wide `source-path=SCRIPTDIR` directive so `-x` can follow `lib/*.sh` (without it, every variable the sourced functions consume is reported as an unused assignment), and **any comment line beginning with the word "shellcheck" is parsed as a directive** — prose mentioning the tool must not start a line with its name, or the file fails to parse.
 
 ## Architecture
 

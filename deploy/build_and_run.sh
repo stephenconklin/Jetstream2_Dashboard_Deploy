@@ -47,12 +47,18 @@
 #                directory and DATA_DIR isn't set, you'll be prompted for the
 #                path interactively. Updating files under DATA_DIR takes
 #                effect on the next `docker restart` — no rebuild needed.
+# The directive below lets `shellcheck -x` resolve the two `source` lines
+# relative to this script rather than the caller's cwd. Without it the
+# linter can't follow them, and then reports every variable the sourced
+# functions consume (see common.sh's header) as an unused assignment. It
+# has to sit before the first command in the file to apply file-wide.
+# NB: any comment line starting with the linter's own name is parsed as a
+# directive, so prose here must avoid that word at the start of a line.
+# shellcheck source-path=SCRIPTDIR
 set -euo pipefail
 
 TOOLING_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/common.sh
 source "$TOOLING_DIR/lib/common.sh"
-# shellcheck source=lib/detect_framework.sh
 source "$TOOLING_DIR/lib/detect_framework.sh"
 
 DRY_RUN=0

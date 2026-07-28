@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Pre-commit hook: lint shell scripts before allowing a commit.
+#
+# Tracked in the repo (rather than living in .git/hooks/, which isn't
+# version-controlled) and opted into per-clone with:
+#
+#   git config core.hooksPath .githooks
+#
+# Skip once with `git commit --no-verify` if you need to.
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# Only run when a shell script is actually part of this commit — no reason
+# to lint on a docs-only change.
+if ! git diff --cached --name-only --diff-filter=ACM | grep -qE '\.sh$|^\.githooks/'; then
+  exit 0
+fi
+
+if ! command -v shellcheck >/dev/null 2>&1; then
+  echo "pre-commit: shellcheck not installed — skipping shell lint." >&2
+  echo "  macOS: brew install shellcheck | Ubuntu: sudo apt-get install shellcheck" >&2
+  exit 0
+fi
+
+echo "pre-commit: linting shell scripts..."
+if ! "$REPO_ROOT/deploy/lint.sh"; then
+  echo >&2
+  echo "pre-commit: shellcheck failed — commit aborted." >&2
+  echo "Fix the issues above, or commit with --no-verify to bypass." >&2
+  exit 1
+fi

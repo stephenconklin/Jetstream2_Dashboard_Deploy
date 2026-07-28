@@ -201,6 +201,26 @@ Run this inside whatever environment (virtualenv, conda env, or the same base im
 
 ---
 
+## Developing on this repo
+
+The deployment tooling is itself shell scripts, so there's a shellcheck pass over them:
+
+```bash
+./deploy/lint.sh
+```
+
+To have it run automatically before each commit (tracked in `.githooks/` rather than `.git/hooks/`, so it's version-controlled — one-time opt-in per clone):
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The hook only fires when a commit actually touches a `.sh` file, skips with a warning if shellcheck isn't installed, and can be bypassed with `git commit --no-verify`. Install shellcheck with `brew install shellcheck` (macOS) or `sudo apt-get install shellcheck` (Ubuntu).
+
+This is a lint, not a test: it catches quoting/expansion defects, not whether an image builds or an app starts. For that, run one of the bundled examples through `build_and_run.sh` (see "Deploying your app" above) — and note that R Shiny builds on a non-amd64 machine go through emulation, so they're slow but they do work.
+
+---
+
 ## Open items / possible future work
 
 - TLS once a domain is available (Nginx sidecar or Caddy in front of the container).

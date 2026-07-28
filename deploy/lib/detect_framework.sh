@@ -247,5 +247,10 @@ detect_framework() {
     exit 1
   fi
 
+  # Consumed by build_and_run.sh (this file's documented output contract,
+  # see the header), which the linter can't see when checking this file on
+  # its own. Kept targeted rather than file-wide so a genuinely unused
+  # variable added later still gets flagged.
+  # shellcheck disable=SC2034
   ENTRY_POINT_DESC="$FRAMEWORK entry point ($ENTRY_FILE)"
 }

@@ -338,6 +338,10 @@ run_container() {
   port80_containers="$(docker ps -aq --filter "publish=80")"
   if [[ -n "$port80_containers" ]]; then
     echo "Removing existing container(s) bound to host port 80: $(echo "$port80_containers" | tr '\n' ' ')"
+    # Deliberately unquoted: docker ps -q returns one ID per line and each
+    # must become a separate argument. IDs are hex, so there's nothing for
+    # globbing to expand.
+    # shellcheck disable=SC2086
     docker rm -f $port80_containers >/dev/null
   fi
 
@@ -388,8 +392,9 @@ public_ip() {
 run_smoke_test() {
   echo "Waiting for the app to respond on port 80..."
   if command -v curl >/dev/null 2>&1; then
-    local smoke_test_ok=0 i
-    for i in $(seq 1 30); do
+    local smoke_test_ok=0
+    # `_`: the counter is only there to bound the loop at 30 tries (~60s).
+    for _ in $(seq 1 30); do
       # 2>/dev/null: -S would otherwise print "curl: (7) Failed to connect"
       # on every poll while the app is still starting — up to 30 alarming
       # error lines during an ordinary, successful startup. A genuine
