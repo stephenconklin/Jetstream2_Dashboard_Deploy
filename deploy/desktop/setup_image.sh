@@ -26,8 +26,14 @@ TARGET_USER="${SUDO_USER:-exouser}"
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 REPO_DIR="${REPO_DIR:-$TARGET_HOME/Jetstream2_Dashboard_Deploy}"
 REPO_URL="${REPO_URL:-https://github.com/stephenconklin/Jetstream2_Dashboard_Deploy.git}"
+# Set REPO_BRANCH to test a branch before it reaches main — e.g.
+#   sudo REPO_BRANCH=feature/researcher-gui ./deploy/desktop/setup_image.sh
+REPO_BRANCH="${REPO_BRANCH:-main}"
 
 echo "Preparing image for user '$TARGET_USER' (home: $TARGET_HOME)"
+echo "  repo:   $REPO_URL"
+echo "  branch: $REPO_BRANCH"
+echo "  into:   $REPO_DIR"
 
 # ---------------------------------------------------------------- packages
 echo
@@ -54,11 +60,20 @@ apt-get install -y --no-install-recommends \
 echo
 echo "== Deployment tooling =="
 if [[ -d "$REPO_DIR/.git" ]]; then
-  echo "Already present at $REPO_DIR — updating."
-  sudo -u "$TARGET_USER" git -C "$REPO_DIR" pull --ff-only || \
-    echo "  (could not fast-forward; leaving the working copy alone)"
+  echo "Already present at $REPO_DIR — updating to $REPO_BRANCH."
+  sudo -u "$TARGET_USER" git -C "$REPO_DIR" fetch origin "$REPO_BRANCH" || true
+  # --ff-only on purpose: never silently merge or discard work in an
+  # existing clone. If this fails, say so and carry on with what's there
+  # rather than guessing what the user wanted.
+  if ! sudo -u "$TARGET_USER" git -C "$REPO_DIR" checkout "$REPO_BRANCH" 2>/dev/null ||
+     ! sudo -u "$TARGET_USER" git -C "$REPO_DIR" merge --ff-only "origin/$REPO_BRANCH" 2>/dev/null; then
+    echo "  Could not fast-forward this clone to $REPO_BRANCH."
+    echo "  Leaving it untouched. To reset it to exactly match GitHub:"
+    echo "     cd $REPO_DIR && git fetch origin && git reset --hard origin/$REPO_BRANCH"
+    echo "  (that discards local commits — check 'git log' first)"
+  fi
 else
-  sudo -u "$TARGET_USER" git clone "$REPO_URL" "$REPO_DIR"
+  sudo -u "$TARGET_USER" git clone --branch "$REPO_BRANCH" "$REPO_URL" "$REPO_DIR"
 fi
 chown -R "$TARGET_USER":"$TARGET_USER" "$REPO_DIR"
 
