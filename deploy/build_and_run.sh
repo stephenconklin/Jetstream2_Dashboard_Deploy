@@ -40,6 +40,11 @@
 #                Docker host isn't amd64, since Shiny Server is published as
 #                an amd64-only .deb (relevant when testing on an Apple
 #                Silicon Mac; Jetstream2 instances are x86_64).
+#   CONTAINER_PORT - override the port the app listens on *inside* the
+#                container, when a project's server is configured for
+#                something other than its framework's default (3838 R Shiny,
+#                8050 Dash, 8000 Python Shiny, 8501 Streamlit). The host
+#                side is always port 80 regardless.
 #   DATA_DIR   - host path (e.g. a mounted Jetstream2 storage volume, typically
 #                under /media/volume/<volume-name>/...) bind-mounted into the
 #                container AND passed as a DATA_DIR container env var. Data is
