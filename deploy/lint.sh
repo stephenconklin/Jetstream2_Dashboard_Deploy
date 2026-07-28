@@ -32,6 +32,7 @@ FILES=(
   deploy/manage.sh
   deploy/lib/common.sh
   deploy/lib/detect_framework.sh
+  deploy/lib/persist_mount.sh
   deploy/docker/apt_retry.sh
   deploy/lint.sh
   deploy/gui/launch_gui.sh

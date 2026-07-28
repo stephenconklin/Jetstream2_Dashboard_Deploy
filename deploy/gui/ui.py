@@ -212,6 +212,19 @@ class DataTab(ttk.Frame):
                   font=("TkFixedFont", 10)).grid(row=2, column=0, sticky="w",
                                                  pady=(PAD, 0))
 
+        # Reboot persistence. Presented as its own optional step rather than
+        # folded into publishing: it changes system configuration, so it
+        # should be a deliberate act with the exact change shown first.
+        self.persist_row = ttk.Frame(dest_box)
+        self.persist_row.columnconfigure(0, weight=1)
+        self.persist_note = tk.StringVar()
+        ttk.Label(self.persist_row, textvariable=self.persist_note,
+                  wraplength=620, justify="left").grid(row=0, column=0, sticky="w")
+        self.persist_btn = ttk.Button(self.persist_row,
+                                      text="Make this permanent",
+                                      command=self._persist)
+        self.persist_btn.grid(row=0, column=1, padx=(PAD, 0))
+
         # -- how to get it there
         route_box = ttk.LabelFrame(self, text="How to get your data here",
                                    padding=PAD)
@@ -295,6 +308,7 @@ class DataTab(ttk.Frame):
 
     def _select(self, loc: volumes.Location) -> None:
         self.shared.data_dir = loc.path
+        self.selected_location = loc
         self.shared.changed()
         self._update_mapping()
         self._show_route()
@@ -302,6 +316,57 @@ class DataTab(ttk.Frame):
             self.mapping.set(self.mapping.get() +
                              "\nNote: this is the system disk — fine for trying "
                              "things out, but use a storage volume for real data.")
+        self._update_persist()
+
+    def _update_persist(self) -> None:
+        """Offer reboot persistence only when it's both possible and needed."""
+        loc = getattr(self, "selected_location", None)
+        if loc is None or loc.kind != "volume" or not loc.uuid:
+            self.persist_row.grid_forget()
+            return
+
+        state = backend.mount_is_persisted(loc.uuid, loc.path)
+        if state is True:
+            self.persist_note.set(
+                "This volume is already set to reconnect automatically after "
+                "a reboot.")
+            self.persist_btn.grid_remove()
+        elif state is False:
+            self.persist_note.set(
+                "This volume is mounted now, but will NOT reconnect by itself "
+                "after the instance reboots — your dashboard would restart "
+                "with no data. This is worth fixing once.")
+            self.persist_btn.grid()
+        else:
+            self.persist_row.grid_forget()
+            return
+        self.persist_row.grid(row=3, column=0, sticky="ew", pady=(PAD, 0))
+
+    def _persist(self) -> None:
+        loc = getattr(self, "selected_location", None)
+        if loc is None:
+            return
+        preview = backend.fstab_preview(loc.uuid, loc.path, loc.fstype)
+        if not messagebox.askyesno(
+                "Make this permanent?",
+                "This adds one line to the system's /etc/fstab so the volume "
+                "reconnects automatically at every boot:\n\n"
+                f"{preview}\n\n"
+                "It includes 'nofail', which means the instance will still "
+                "start normally even if this volume is ever removed. The "
+                "current file is backed up first, and the change is undone "
+                "automatically if it doesn't validate.\n\n"
+                "You'll be asked for an administrator password. Continue?"):
+            return
+        try:
+            out = backend.persist_mount(loc.uuid, loc.path, loc.fstype)
+        except backend.BackendError as exc:
+            messagebox.showerror("Could not make it permanent", exc.full_text())
+            return
+        messagebox.showinfo(
+            "Done",
+            out.strip() or "This volume will now reconnect after a reboot.")
+        self._update_persist()
 
     def _browse(self) -> None:
         chosen = filedialog.askdirectory(title="Select the folder holding your data")

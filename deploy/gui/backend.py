@@ -465,6 +465,69 @@ def open_folder(path: str) -> None:
     open_in_browser(path)
 
 
+PERSIST_MOUNT = REPO_ROOT / "deploy" / "lib" / "persist_mount.sh"
+# Preferred if the image installs it here: pkexec then runs a root-owned
+# file rather than one inside a user-writable clone.
+PERSIST_MOUNT_SYSTEM = Path("/usr/local/libexec/persist_mount.sh")
+
+
+def _persist_mount_path() -> Path:
+    return PERSIST_MOUNT_SYSTEM if PERSIST_MOUNT_SYSTEM.exists() else PERSIST_MOUNT
+
+
+def mount_is_persisted(uuid: str, mountpoint: str) -> bool | None:
+    """Whether this volume already remounts at boot. None if unknown.
+
+    Runs the unprivileged --check path so the GUI can display current state
+    without provoking a password prompt merely to ask a question.
+    """
+    script = _persist_mount_path()
+    if not script.exists() or not uuid:
+        return None
+    proc = _run([str(script), "--check", uuid, mountpoint], timeout=20)
+    if proc.returncode != 0:
+        return None
+    return "status=persisted" in proc.stdout
+
+
+def persist_mount(uuid: str, mountpoint: str, fstype: str) -> str:
+    """Add an /etc/fstab entry so a volume survives reboot.
+
+    Escalation order — pkexec, then passwordless sudo, then give up and let
+    the caller show the command. Deliberately never collects a password in
+    a Tk entry and pipes it to `sudo -S`: that puts a credential in this
+    process's memory for no benefit over pkexec's system-owned dialog, and
+    teaches researchers to type their password into arbitrary windows.
+    """
+    script = _persist_mount_path()
+    if not script.exists():
+        raise BackendError(f"Helper script not found at {script}.")
+
+    args = [str(script), uuid, mountpoint, fstype]
+
+    if shutil.which("pkexec"):
+        proc = _run(["pkexec", *args], timeout=180)
+    elif _run(["sudo", "-n", "true"], timeout=15).returncode == 0:
+        proc = _run(["sudo", "-n", *args], timeout=180)
+    else:
+        raise BackendError(
+            "This step needs administrator rights, and neither a password "
+            "prompt nor passwordless sudo is available here.\n\n"
+            "Run this in a terminal instead:\n\n"
+            f"  sudo {' '.join(args)}")
+
+    if proc.returncode != 0:
+        raise BackendError("Could not make the mount permanent.",
+                           proc.stderr or proc.stdout, proc.returncode)
+    return proc.stdout
+
+
+def fstab_preview(uuid: str, mountpoint: str, fstype: str) -> str:
+    """Exactly what would be added, to show before anything is changed."""
+    opts = "defaults,nofail,x-systemd.device-timeout=10s"
+    return f"UUID={uuid}\t{mountpoint}\t{fstype}\t{opts}\t0\t2"
+
+
 def docker_available() -> tuple[bool, str]:
     """Whether Docker is usable by this user, and why not if it isn't."""
     if shutil.which("docker") is None:
