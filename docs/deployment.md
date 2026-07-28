@@ -87,6 +87,55 @@ This tool is scoped to one app at a time per instance (see "Assumes one instance
 
 ---
 
+## Managing the deployed container
+
+These are plain `docker` commands — no wrapper script needed. Examples below assume the default image/container name `dashboard-app`; substitute your own if you passed `[image-name]` to `build_and_run.sh`.
+
+```bash
+# Check what's running
+docker ps
+
+# View app logs (add -f to follow / tail live)
+docker logs dashboard-app
+docker logs -f dashboard-app
+
+# Stop / start / restart the running container
+docker stop dashboard-app
+docker start dashboard-app
+docker restart dashboard-app
+
+# Remove the container (re-running build_and_run.sh does this for you automatically)
+docker rm -f dashboard-app
+```
+
+### Cleaning up unused images and disk space
+
+Every rebuild leaves the previous image's now-untagged layers behind, and Docker's build cache grows over time — on a small Jetstream2 volume this can fill the disk. A few ways to reclaim space:
+
+```bash
+# See how much space Docker is using, broken down by category
+docker system df
+
+# Remove dangling images (untagged layers left over from rebuilds) — safe, does not touch running containers
+docker image prune
+
+# Remove ALL unused images (not just dangling ones — anything not referenced by a running container)
+docker image prune -a
+
+# Remove build cache
+docker builder prune
+
+# Nuclear option: remove all stopped containers, unused networks, dangling images, and build cache in one go
+docker system prune
+
+# Same as above, but also removes unused (non-dangling) images — most aggressive single command
+docker system prune -a
+```
+
+`docker image prune -a` / `docker system prune -a` are generally safe here since this tool only ever runs one app at a time (see "Assumes one instance per project/researcher" above), but double-check `docker ps -a` first if you have other unrelated containers/images on the same instance.
+
+---
+
 ## Choosing package versions
 
 Currently pinned:

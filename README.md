@@ -1,8 +1,8 @@
 # Jetstream2 Dashboard Deploy
 
-Deployment tooling for running a dashboard/app on a [Jetstream2](https://jetstream-cloud.org/) instance. Point it at any **R Shiny**, **Plotly Dash**, **Python Shiny**, or **Streamlit** project and get it reachable in a browser on port 80 — no manual GDAL/GEOS wrangling, no hand-written package lists (where the framework allows it), no figuring out which Dockerfile or run command to use.
+Deployment tooling that helps scientific researchers get their data dashboards out of a laptop/notebook and onto a publicly accessible web server on [Jetstream2](https://jetstream-cloud.org/) — no DevOps background required. Point it at any **R Shiny**, **Plotly Dash**, **Python Shiny**, or **Streamlit** project and get it reachable in a browser on port 80, with no manual GDAL/GEOS wrangling, no hand-written package lists (where the framework allows it), and no figuring out which Dockerfile or run command to use.
 
-A single script, [`deploy/build_and_run.sh`](deploy/build_and_run.sh), auto-detects which of the four frameworks a dropped-in project is (from its code, not just filenames), builds a self-contained Docker image, and runs it bound to port 80. Full details, design rationale, and the auto-detection story are in [`docs/deployment.md`](docs/deployment.md).
+A single script, [`deploy/build_and_run.sh`](deploy/build_and_run.sh), auto-detects which of the four frameworks a dropped-in project is (from its code, not just filenames), builds a self-contained Docker image, and runs it bound to port 80. This README covers the basics; full details, design rationale, and the auto-detection story are in [`docs/deployment.md`](docs/deployment.md).
 
 ## Quick start
 
@@ -48,6 +48,18 @@ docs/
 ```
 
 See [`docs/deployment.md`](docs/deployment.md) for prerequisites, step-by-step instructions, and the reasoning behind each design choice.
+
+## Managing the running app
+
+`build_and_run.sh` names both the image and the container `dashboard-app` by default (or whatever `[image-name]` you passed it), always bound to host port 80. To swap in a different project, just re-run `./deploy/build_and_run.sh` — no need to stop or remove anything first.
+
+```bash
+docker ps                    # check what's running
+docker logs -f dashboard-app # view / follow app logs
+docker restart dashboard-app # restart without rebuilding
+```
+
+See [`docs/deployment.md`](docs/deployment.md#managing-the-deployed-container) for the full command reference, including reclaiming disk space from old images.
 
 ## License
 
