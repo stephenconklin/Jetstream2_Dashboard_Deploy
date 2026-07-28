@@ -96,7 +96,11 @@ cmd_url() {
 
 cmd_logs() {
   local n="${1:-200}"
-  docker logs --tail "$n" "$CONTAINER_NAME"
+  # 2>&1 because `docker logs` forwards the container's stdout and stderr to
+  # its own, and most app servers (gunicorn, Shiny Server, Streamlit) log to
+  # stderr. Without this, anything capturing only stdout — including the
+  # GUI — gets an empty log and looks broken.
+  docker logs --tail "$n" "$CONTAINER_NAME" 2>&1
 }
 
 cmd_restart() {

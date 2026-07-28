@@ -342,6 +342,129 @@ def manage(action: str) -> str:
     return proc.stdout
 
 
+PROJECTS_DIR = Path.home() / "dashboard-projects"
+
+
+def clone_repo(url: str, name: str = "") -> Path:
+    """Clone a Git repository into ~/dashboard-projects/ and return its path.
+
+    Refuses to overwrite an existing checkout rather than silently pulling
+    or deleting — a researcher who clones twice usually means the second
+    one to be a fresh copy, and quietly discarding local edits to the first
+    would be the worst possible interpretation.
+    """
+    url = url.strip()
+    if not url:
+        raise BackendError("Enter the address of your repository first.")
+
+    folder = name.strip() or url.rstrip("/").split("/")[-1]
+    if folder.endswith(".git"):
+        folder = folder[: -len(".git")]
+    if not folder:
+        raise BackendError("Could not work out a folder name from that address.")
+
+    PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+    dest = PROJECTS_DIR / folder
+    if dest.exists():
+        raise BackendError(
+            f"There's already a folder at {dest}.\n\n"
+            "Rename or remove it first, or use 'Browse' to deploy what's "
+            "already there.")
+
+    proc = _run(["git", "clone", "--depth", "1", url, str(dest)], timeout=900)
+    if proc.returncode != 0:
+        raise BackendError(
+            "Could not download that repository.", proc.stderr, proc.returncode)
+    return dest
+
+
+def extract_zip(zip_path: str | os.PathLike[str], name: str = "") -> Path:
+    """Unpack a .zip into ~/dashboard-projects/ and return the project root.
+
+    If the archive contains a single top-level folder — which is what
+    GitHub's "Download ZIP" and most hand-made archives produce — that
+    folder becomes the project root, so the researcher doesn't end up
+    pointing the deploy at a wrapper directory containing nothing but
+    another directory.
+    """
+    import zipfile
+
+    src = Path(zip_path)
+    if not src.is_file():
+        raise BackendError(f"{src} is not a file.")
+
+    folder = name.strip() or src.stem
+    PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+    dest = PROJECTS_DIR / folder
+    if dest.exists():
+        raise BackendError(
+            f"There's already a folder at {dest}.\n\n"
+            "Rename or remove it first, or use 'Browse' to deploy it as-is.")
+
+    try:
+        with zipfile.ZipFile(src) as zf:
+            # Reject entries that would escape the destination. Zip files
+            # can contain ../ paths, and this one comes from wherever the
+            # researcher got it.
+            for member in zf.namelist():
+                target = (dest / member).resolve()
+                if not str(target).startswith(str(dest.resolve())):
+                    raise BackendError(
+                        f"That archive contains an unsafe path ({member}) "
+                        "and was not extracted.")
+            zf.extractall(dest)
+    except zipfile.BadZipFile:
+        raise BackendError(f"{src.name} is not a valid .zip file.") from None
+
+    entries = [p for p in dest.iterdir() if not p.name.startswith("__MACOSX")]
+    if len(entries) == 1 and entries[0].is_dir():
+        return entries[0]
+    return dest
+
+
+def read_block_devices() -> tuple[str, str]:
+    """Raw ``lsblk`` and ``findmnt`` JSON, for volumes.py to parse.
+
+    Returns empty strings when the commands don't exist — which is the case
+    on macOS, where the GUI is developed. Callers degrade to offering the
+    home directory rather than failing.
+    """
+    lsblk_text = findmnt_text = ""
+    if shutil.which("lsblk"):
+        proc = _run(["lsblk", "-J", "-b", "-o",
+                     "NAME,SIZE,TYPE,FSTYPE,LABEL,UUID,MOUNTPOINT"], timeout=20)
+        if proc.returncode == 0:
+            lsblk_text = proc.stdout
+    if shutil.which("findmnt"):
+        proc = _run(["findmnt", "-J", "-b", "-o",
+                     "TARGET,SOURCE,FSTYPE,SIZE,USED,AVAIL"], timeout=20)
+        if proc.returncode == 0:
+            findmnt_text = proc.stdout
+    return lsblk_text, findmnt_text
+
+
+def public_ip() -> str:
+    """This instance's public address, via common.sh's own lookup.
+
+    Shelling out rather than reimplementing: a floating IP is NAT'd onto
+    the instance, so the answer has to come from an external service, and
+    common.sh already handles the fallbacks. Returns a placeholder string
+    if it can't be determined.
+    """
+    common = REPO_ROOT / "deploy" / "lib" / "common.sh"
+    proc = _run(["bash", "-c", f'source "{common}"; public_ip'], timeout=20)
+    return proc.stdout.strip() if proc.returncode == 0 else "<instance-fixed-ip>"
+
+
+def username() -> str:
+    return os.environ.get("USER") or os.environ.get("LOGNAME") or "exouser"
+
+
+def open_folder(path: str) -> None:
+    """Show a folder in the desktop's file manager."""
+    open_in_browser(path)
+
+
 def docker_available() -> tuple[bool, str]:
     """Whether Docker is usable by this user, and why not if it isn't."""
     if shutil.which("docker") is None:
