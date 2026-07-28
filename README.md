@@ -26,6 +26,7 @@ Visit `http://<instance-fixed-ip>/` in a browser.
 ```
 deploy/
 ├── build_and_run.sh         # the one script: detects framework, builds, runs, smoke-tests
+├── lint.sh                  # shellcheck pass over every shell script here
 ├── lib/
 │   ├── common.sh            # shared build/run/retry/smoke-test/data-dir logic
 │   └── detect_framework.sh  # framework auto-detection
@@ -36,6 +37,7 @@ deploy/
 │   ├── Dockerfile.streamlit      # Streamlit
 │   ├── apt_retry.sh              # shared retry-wrapped apt-get helper
 │   ├── install_deps.R            # R-Shiny-only: auto-installs the app's R packages
+│   ├── generate_lock.R           # R-Shiny-only: generates a missing renv.lock pre-build
 │   └── shiny-server.conf         # R-Shiny-only Shiny Server config
 └── app/                     # drop-in slot for the project to deploy (gitignored)
 examples/
@@ -45,6 +47,8 @@ examples/
 └── streamlit-hello-world/     # Streamlit self-test app
 docs/
 └── deployment.md             # full walkthrough, prerequisites, and design rationale
+.githooks/
+└── pre-commit                # runs deploy/lint.sh before each commit (opt-in)
 ```
 
 See [`docs/deployment.md`](docs/deployment.md) for prerequisites, step-by-step instructions, and the reasoning behind each design choice.
