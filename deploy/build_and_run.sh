@@ -73,6 +73,23 @@ done
 PROJECT_DIR="${POSITIONAL[0]:-$TOOLING_DIR/app}"
 IMAGE_NAME="${POSITIONAL[1]:-dashboard-app}"
 CONTAINER_NAME="$IMAGE_NAME"
+
+# Validated up front because `docker build` rejects a non-conforming tag
+# *deterministically* — and build_image() would otherwise treat that like a
+# flaky network error and retry it 3 times with 10s backoffs before failing,
+# turning an instant typo into a 20-second wait with a repeated error.
+# Docker's rule: lowercase alphanumerics separated by . _ __ or -, starting
+# and ending with an alphanumeric.
+if [[ ! "$IMAGE_NAME" =~ ^[a-z0-9]+([._-]+[a-z0-9]+)*$ ]]; then
+  echo "Invalid image name '$IMAGE_NAME'." >&2
+  echo "Docker requires lowercase letters, digits, and . _ - separators," >&2
+  echo "starting and ending with a letter or digit." >&2
+  lowered="$(printf '%s' "$IMAGE_NAME" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$lowered" =~ ^[a-z0-9]+([._-]+[a-z0-9]+)*$ ]]; then
+    echo "Did you mean '$lowered'?" >&2
+  fi
+  exit 1
+fi
 DATA_DIR="${DATA_DIR:-}"
 FRAMEWORK="${FRAMEWORK:-}"
 ENTRY_FILE=""

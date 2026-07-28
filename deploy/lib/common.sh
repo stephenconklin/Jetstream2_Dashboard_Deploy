@@ -334,10 +334,13 @@ DOCKERIGNORE
 run_container() {
   docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
-  local port80_containers
+  local port80_containers port80_names
   port80_containers="$(docker ps -aq --filter "publish=80")"
   if [[ -n "$port80_containers" ]]; then
-    echo "Removing existing container(s) bound to host port 80: $(echo "$port80_containers" | tr '\n' ' ')"
+    # Names, not the 64-char IDs used for the removal itself — the point of
+    # the message is to tell you which app is being replaced.
+    port80_names="$(docker ps -a --filter "publish=80" --format '{{.Names}}' | tr '\n' ' ')"
+    echo "Replacing container(s) already bound to host port 80: ${port80_names% }"
     # Deliberately unquoted: docker ps -q returns one ID per line and each
     # must become a separate argument. IDs are hex, so there's nothing for
     # globbing to expand.
@@ -356,13 +359,16 @@ run_container() {
   local run_platform_args=()
   [[ -n "${BUILD_PLATFORM:-}" ]] && run_platform_args=(--platform "$BUILD_PLATFORM")
 
+  # >/dev/null: `docker run -d` echoes the 64-char container ID, which is
+  # noise for the audience this tool is for — the useful confirmation is the
+  # summary run_smoke_test() prints once the app actually responds.
   docker run -d \
     "${run_platform_args[@]+"${run_platform_args[@]}"}" \
     --name "$CONTAINER_NAME" \
     --restart unless-stopped \
     -p 80:"$INTERNAL_PORT" \
     "${data_mount_args[@]+"${data_mount_args[@]}"}" \
-    "$IMAGE_NAME:latest"
+    "$IMAGE_NAME:latest" >/dev/null
 }
 
 # Best-effort public IP lookup for the final "reachable at" message. Not a
@@ -386,9 +392,18 @@ public_ip() {
 
 # A clean `docker build` + `docker run -d` only proves the image is valid
 # and the container started — not that the app process inside stayed up
-# (e.g. a missing data file or an app error can crash it seconds later).
-# Poll the app before declaring success, and surface the container's own
-# logs immediately if it never responds. Reads CONTAINER_NAME from the caller.
+# (e.g. a missing dependency or a bad entry point can kill it seconds
+# later). Poll the app before declaring success, and surface the
+# container's own logs immediately if it never responds.
+#
+# What this does NOT catch: an error *inside* an app that still serves.
+# Streamlit and Shiny both catch script-level exceptions and render them in
+# the browser, so the HTTP check passes and this reports success — the app
+# is genuinely reachable, it just shows a traceback to whoever opens it.
+# This is a liveness check, not a correctness check; nothing short of
+# loading the page can tell you the dashboard actually works.
+#
+# Reads CONTAINER_NAME from the caller.
 run_smoke_test() {
   echo "Waiting for the app to respond on port 80..."
   if command -v curl >/dev/null 2>&1; then
@@ -406,13 +421,32 @@ run_smoke_test() {
       sleep 2
     done
     if [[ "$smoke_test_ok" -eq 1 ]]; then
-      echo "Container '$CONTAINER_NAME' running and responding. App should be reachable at http://$(public_ip)/"
+      # The commands are spelled out rather than left to the docs: this tool
+      # is aimed at researchers who may not use Docker day to day, and this
+      # is the moment they need them.
+      echo
+      echo "  Deployed. '$CONTAINER_NAME' is running and responding."
+      echo
+      echo "    URL       http://$(public_ip)/"
+      echo "    Logs      docker logs -f $CONTAINER_NAME"
+      echo "    Restart   docker restart $CONTAINER_NAME"
+      echo "    Stop      docker stop $CONTAINER_NAME"
+      echo
+      echo "  Re-run this script to deploy again after a code change; it replaces"
+      echo "  the running container for you."
+      echo
     else
       echo "Warning: container '$CONTAINER_NAME' started, but never responded on port 80" >&2
-      echo "within 60s. This usually means the app process crashed at runtime (e.g. a" >&2
-      echo "missing data file, or an error in the app itself) even though the image built" >&2
-      echo "successfully. Recent container logs:" >&2
+      echo "within 60s. The app process died at startup rather than serving — usually a" >&2
+      echo "missing dependency, a wrong entry point, or a port mismatch, not a bug in the" >&2
+      echo "app's own logic (frameworks render those in the browser instead of exiting)." >&2
+      echo "The image built fine; this is a runtime failure. Recent container logs:" >&2
       docker logs --tail 50 "$CONTAINER_NAME" >&2
+      echo >&2
+      echo "The container is left in place so you can investigate. Note it runs with" >&2
+      echo "--restart unless-stopped, so if the app is crashing it's restarting in a loop:" >&2
+      echo "  docker logs -f $CONTAINER_NAME   # full log, follow live" >&2
+      echo "  docker stop $CONTAINER_NAME      # stop the restart loop" >&2
       exit 1
     fi
   else
