@@ -29,6 +29,7 @@ fi
 # which dialect to check it against.
 FILES=(
   deploy/build_and_run.sh
+  deploy/manage.sh
   deploy/lib/common.sh
   deploy/lib/detect_framework.sh
   deploy/docker/apt_retry.sh
