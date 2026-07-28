@@ -25,6 +25,8 @@ If you're using the **Deploy My Dashboard** application on the instance's deskto
 1. **Put data on your storage volume, not in your home folder.** The home folder lives on the instance's root disk: limited space, and gone if the instance is ever deleted. A volume under `/media/volume/...` persists independently and can be far larger.
 2. **Don't put data inside your project folder** if it's large. The deployment mounts your data at run time rather than copying it into the image, so it lives separately and can be updated without rebuilding anything.
 
+   If you do move a `data/` folder out of your project and onto a volume, **tell the tool where it went** — pick that folder in the application's step 2, or set `DATA_DIR=/media/volume/... ` on the command line. Your app keeps reading `data/` exactly as before; that path is supplied by the mount. Without it the dashboard will start and then fail to find its files.
+
 ---
 
 ## Git

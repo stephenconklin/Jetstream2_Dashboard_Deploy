@@ -436,7 +436,27 @@ def extract_zip(zip_path: str | os.PathLike[str], name: str = "") -> Path:
 
     entries = [p for p in dest.iterdir() if not p.name.startswith("__MACOSX")]
     if len(entries) == 1 and entries[0].is_dir():
-        return entries[0]
+        inner = entries[0]
+        # Flatten the usual "myproject.zip contains myproject/" case, which
+        # would otherwise leave the project at
+        # dashboard-projects/myproject/myproject — correct, but confusing to
+        # read back at exactly the moment someone is checking they picked the
+        # right folder. Only done when the names match, and only into a spot
+        # that's free, so nothing can be overwritten.
+        if inner.name == dest.name:
+            promoted = dest.parent / f".{dest.name}.unpacking"
+            try:
+                inner.rename(promoted)
+                dest.rmdir()            # only succeeds if now empty
+                promoted.rename(dest)
+                return dest
+            except OSError:
+                # Any surprise (leftover files, permissions) — leave the
+                # nested-but-valid layout rather than risk mangling it.
+                if promoted.exists() and not dest.exists():
+                    promoted.rename(dest)
+                return inner if inner.exists() else dest
+        return inner
     return dest
 
 

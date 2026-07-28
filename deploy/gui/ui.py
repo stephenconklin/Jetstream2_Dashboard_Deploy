@@ -170,9 +170,12 @@ class AppTab(ttk.Frame):
         self.result.set(
             f"Found a {info.framework} dashboard in {path}\n"
             f"Entry point: {info.entry_point_desc}\n\n"
-            + ("Next: choose where your data lives (step 2)."
+            + ("This project includes a data/ folder, so choose where that "
+               "data lives on this server in step 2."
                if info.has_data_dir else
-               "This app doesn't use a data folder — go straight to step 3."))
+               "This project doesn't include a data/ folder. If your dashboard "
+               "reads data files kept somewhere else — on your storage volume, "
+               "say — point step 2 at them. Otherwise go straight to step 3."))
 
 
 # --------------------------------------------------------------------------
@@ -260,18 +263,27 @@ class DataTab(ttk.Frame):
 
     def _refresh_header(self) -> None:
         info = self.shared.info
+        target = info.data_mount_target if info else "the app's data folder"
         if info is None:
             self.header.set("Choose your dashboard in step 1 first.")
         elif not info.has_data_dir:
+            # Deliberately not "you can skip this step". Moving data out of
+            # the project and onto a volume is what the docs recommend, and
+            # doing so removes the data/ folder this flag reports on — so
+            # the projects most in need of this step are the ones that look
+            # like they don't need it.
             self.header.set(
-                "This dashboard doesn't read from a data folder, so you can "
-                "skip this step and go to step 3.")
+                "This project doesn't include a data/ folder of its own. If "
+                "your dashboard reads data files that live somewhere else on "
+                "this server — a storage volume, typically — choose that "
+                f"folder below and it will appear inside your app at {target}. "
+                "If your dashboard doesn't read any data files, skip to step 3.")
         else:
             self.header.set(
                 "This dashboard reads from a data/ folder. Pick where that "
-                "data lives on this server — it is mounted into the app at "
-                "run time rather than copied into it, so you can update the "
-                "data later without rebuilding anything.")
+                f"data lives on this server; it appears inside the app at "
+                f"{target}. It is mounted at run time rather than copied in, "
+                "so you can update the data later without rebuilding anything.")
         self._update_mapping()
 
     def _load_locations(self) -> None:
@@ -508,11 +520,19 @@ class DeployTab(ttk.Frame):
                 "\nThis project has no renv.lock, so its R packages will be "
                 "worked out and recorded first. Expect this to take a while — "
                 "often 20 minutes or more. It only happens once.")
-        if info.has_data_dir:
-            if self.shared.data_dir:
-                lines.append(f"\nData: {self.shared.data_dir}")
-            else:
-                lines.append("\nThis app needs a data folder — choose one in step 2.")
+        # Show the mount whenever one is configured, regardless of whether
+        # the project ships its own data/ folder — otherwise a project whose
+        # data was moved onto a volume gives no indication that anything is
+        # being attached at all.
+        if self.shared.data_dir:
+            lines.append(f"\nData: {self.shared.data_dir}\n"
+                         f"      appears inside the app at {info.data_mount_target}")
+        elif info.has_data_dir:
+            lines.append("\nThis app reads from a data/ folder — choose where "
+                         "that data lives in step 2.")
+        else:
+            lines.append("\nNo data folder attached. If your dashboard reads "
+                         "data files, set that up in step 2 first.")
         self.summary.set("\n".join(lines))
 
         ready = (info.deps_ok

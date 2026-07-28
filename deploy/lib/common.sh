@@ -87,7 +87,13 @@ print_dry_run_summary() {
   echo "Entry point:     $ENTRY_POINT_DESC"
   echo "Base image:      $BASE_IMAGE"
   echo "Dependencies:    $deps_status"
-  echo "data/ directory: $([[ "$has_data_dir" -eq 1 ]] && echo "present (DATA_DIR would be required, prompted for if unset)" || echo none)"
+  # When absent, say what to do about it rather than just "none". Moving
+  # data out of the project onto a storage volume is the recommended
+  # arrangement, and it makes this read "none" — so a bare "none" is most
+  # misleading for exactly the projects that are set up correctly.
+  echo "data/ directory: $([[ "$has_data_dir" -eq 1 ]] \
+    && echo "present (DATA_DIR would be required, prompted for if unset)" \
+    || echo "not in the project (set DATA_DIR=/path to mount data from elsewhere)")"
   echo "apt.txt:         $([[ "$has_apt_txt" -eq 1 ]] && echo present || echo "absent/empty")"
   echo "==========================================="
 }
