@@ -41,10 +41,18 @@ def _apply_icon(root: tk.Tk) -> None:
 
 def main() -> int:
     # className sets WM_CLASS, which is what a dock matches against the
-    # StartupWMClass line in dashboard-deploy.desktop. Without a stable
-    # value the window can't be associated with its launcher and the dock
-    # shows a generic icon. Change this and the .desktop together.
-    root = tk.Tk(className="DashboardDeploy")
+    # StartupWMClass line in dashboard-deploy.desktop. Without a matching
+    # pair the window can't be associated with its launcher and the dock
+    # shows a generic gear regardless of the Icon= setting.
+    #
+    # Tk does NOT use this string verbatim: it capitalises the first
+    # character and lower-cases the rest, so "DashboardDeploy" would arrive
+    # as "Dashboarddeploy" and silently fail to match. The all-lowercase
+    # form below makes the transformation obvious — it becomes
+    # "Dashboard-deploy", which is exactly what the .desktop declares.
+    # If you change this, check tk.Tk(...).winfo_class() and update the
+    # .desktop to match.
+    root = tk.Tk(className="dashboard-deploy")
     _apply_icon(root)
     root.title("Deploy My Dashboard")
     root.geometry("820x720")

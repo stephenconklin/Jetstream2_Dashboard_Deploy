@@ -13,8 +13,11 @@ Terminal=false
 StartupNotify=true
 # How the dock associates the running window with this launcher. Without it
 # the window can't be matched, and the dock falls back to a generic gear
-# regardless of what Icon= says. Must equal the WM_CLASS that
-# tk.Tk(className=...) sets in __main__.py — change both together.
-StartupWMClass=DashboardDeploy
+# regardless of what Icon= says.
+#
+# This is the value Tk produces from className="dashboard-deploy" in
+# __main__.py: Tk capitalises the first character and lower-cases the rest.
+# The two must stay in step; verify with `xprop WM_CLASS` on the window.
+StartupWMClass=Dashboard-deploy
 Categories=Science;Education;Development;
 Keywords=dashboard;shiny;streamlit;dash;deploy;publish;
