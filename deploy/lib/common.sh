@@ -359,6 +359,9 @@ DOCKERIGNORE
   local platform_args=()
   [[ -n "${BUILD_PLATFORM:-}" ]] && platform_args=(--platform "$BUILD_PLATFORM")
 
+  local build_log
+  build_log="$(mktemp)"
+
   local build_tries=3 attempt build_ok=0
   for attempt in $(seq 1 "$build_tries"); do
     if docker build \
@@ -367,21 +370,88 @@ DOCKERIGNORE
       "${target_args[@]+"${target_args[@]}"}" \
       "${platform_args[@]+"${platform_args[@]}"}" \
       -t "$IMAGE_NAME:latest" \
-      "$build_ctx"; then
+      "$build_ctx" 2>&1 | tee "$build_log"; then
       build_ok=1
       break
     fi
+
+    # The retries exist for transient mirror/network hiccups. A dependency
+    # that cannot be built will fail identically every time, so retrying it
+    # just burns 20 seconds and prints the same error three times, pushing
+    # the real cause further up the log — which is where a researcher then
+    # has to go looking for it.
+    if build_failure_is_permanent "$build_log"; then
+      echo >&2
+      echo "This is a problem with the project's dependencies, not a network" >&2
+      echo "hiccup — retrying wouldn't help, so stopping here." >&2
+      break
+    fi
+
     if [[ "$attempt" -lt "$build_tries" ]]; then
       echo "docker build failed (attempt $attempt/$build_tries) — retrying in 10s..." >&2
       sleep 10
     fi
   done
+
   if [[ "$build_ok" -ne 1 ]]; then
-    echo "docker build failed after $build_tries attempts." >&2
+    summarize_build_failure "$build_log"
+    rm -f "$build_log"
     exit 1   # EXIT trap cleans up $BUILD_CTX
   fi
 
+  rm -f "$build_log"
   cleanup_build_ctx
+}
+
+# Distinguish "this will never work" from "the network wobbled".
+# Deliberately conservative: anything not listed here is still retried, so a
+# misclassification costs a slower failure rather than a missed recovery.
+build_failure_is_permanent() {
+  grep -qE \
+    'metadata-generation-failed|Could not build wheels|legacy-install-failure|fatal error:|Could not find a version that satisfies|No matching distribution found|invalid tag|pull access denied|manifest unknown|manifest for .* not found|Unable to locate package|has no installation candidate|undefined reference to|configure: error:' \
+    "$1"
+}
+
+# Pull the actual reason out of a long build log.
+#
+# Without this the last line a researcher sees is "docker build failed",
+# with the cause hundreds of lines up — and after a --no-cache rebuild of an
+# R geospatial image, "up" can mean tens of thousands of lines.
+summarize_build_failure() {
+  local log="$1"
+  echo >&2
+  echo "=== The build failed. The relevant part of the log: ===" >&2
+
+  # Two tiers. First look for the specific complaint from pip, apt, gcc or R;
+  # only fall back to docker's own "did not complete successfully" wrapper,
+  # which names the failing RUN line but not the reason.
+  #
+  # Note the deliberate absence of a `^` anchor: BuildKit prefixes every line
+  # of build output with a step/timestamp ("6.622 error: ..."), so anchored
+  # patterns match nothing at all.
+  local specific generic
+  specific="$(grep -iE \
+      'error in .+ setup command|metadata-generation-failed|Could not build wheels|Failed building wheel|No matching distribution|Could not find a version that satisfies|fatal error:|Unable to locate package|has no installation candidate|undefined reference to|there is no package called|installation of package .+ had non-zero exit status|configure: error:' \
+      "$log" \
+    | grep -viE 'this error originates from a subprocess|hint: See above|note: This' \
+    | tail -6)"
+
+  generic="$(grep -iE 'did not complete successfully|returned a non-zero code' "$log" | tail -2)"
+
+  if [[ -n "$specific" ]]; then
+    printf '%s\n' "$specific" >&2
+    [[ -n "$generic" ]] && printf '\n%s\n' "$generic" >&2
+  elif [[ -n "$generic" ]]; then
+    printf '%s\n' "$generic" >&2
+  else
+    tail -15 "$log" >&2
+  fi
+
+  echo >&2
+  echo "A pinned package that won't build is the most common cause. If the" >&2
+  echo "version is old, it may predate the Python or R in the base image —" >&2
+  echo "either relax the pin, or set BASE_IMAGE to an older one." >&2
+  echo "See docs/deployment.md's 'Pinning' sections." >&2
 }
 
 # `docker rm -f` + `docker run -d`, parameterized by internal port and data
