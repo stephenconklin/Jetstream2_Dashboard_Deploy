@@ -570,10 +570,14 @@ run_smoke_test() {
       echo
     else
       echo "Warning: container '$CONTAINER_NAME' started, but never responded on port 80" >&2
-      echo "within 60s. The app process died at startup rather than serving — usually a" >&2
-      echo "missing dependency, a wrong entry point, or a port mismatch, not a bug in the" >&2
-      echo "app's own logic (frameworks render those in the browser instead of exiting)." >&2
-      echo "The image built fine; this is a runtime failure. Recent container logs:" >&2
+      echo "within 60s. The app process died at startup rather than serving. The image" >&2
+      echo "built fine, so this is a runtime failure — most often one of:" >&2
+      echo "  * the data folder doesn't hold the files the app expects (check the logs" >&2
+      echo "    below for a missing file; the folder you chose is mounted OVER the app's" >&2
+      echo "    own, so an empty one hides whatever the project shipped)" >&2
+      echo "  * a missing dependency, a wrong entry point, or a port mismatch" >&2
+      echo "It is unlikely to be a bug in the app's own logic — frameworks render those" >&2
+      echo "in the browser rather than exiting. Recent container logs:" >&2
       docker logs --tail 50 "$CONTAINER_NAME" >&2
       echo >&2
       echo "The container is left in place so you can investigate. Note it runs with" >&2

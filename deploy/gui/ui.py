@@ -36,6 +36,22 @@ class Shared:
             fn()
 
 
+def _folder_is_empty(path: str) -> bool:
+    """Whether a directory holds no files at any depth.
+
+    Cheap on purpose — stops at the first file rather than walking a
+    dataset that may be very large.
+    """
+    from pathlib import Path
+    try:
+        for entry in Path(path).rglob("*"):
+            if entry.is_file():
+                return False
+    except OSError:
+        return False
+    return True
+
+
 def _selectable_text(parent, content: str, height: int = 2) -> tk.Text:
     """A read-only Text the user can still select and copy from.
 
@@ -548,6 +564,17 @@ class DeployTab(ttk.Frame):
         if self.shared.data_dir:
             lines.append(f"\nData: {self.shared.data_dir}\n"
                          f"      appears inside the app at {info.data_mount_target}")
+            # Catch the empty-folder case before a build that can run for
+            # many minutes. The chosen folder is mounted *over* the app's
+            # own data/, so an empty one doesn't merely add nothing — it
+            # hides whatever the project shipped, and the app then dies at
+            # startup looking for files that were there a moment ago.
+            if _folder_is_empty(self.shared.data_dir):
+                lines.append(
+                    "\n  WARNING: that folder is empty. It will be mounted over "
+                    "the app's own data folder, hiding anything the project "
+                    "shipped — the app will probably fail to start. Copy your "
+                    "data there first, or choose a different folder in step 2.")
         elif info.has_data_dir:
             lines.append("\nThis app reads from a data/ folder — choose where "
                          "that data lives in step 2.")
