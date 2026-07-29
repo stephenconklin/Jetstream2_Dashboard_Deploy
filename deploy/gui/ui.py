@@ -66,6 +66,82 @@ def _selectable_text(parent, content: str, height: int = 2) -> tk.Text:
     return widget
 
 
+class ScrollableFrame(ttk.Frame):
+    """A frame whose contents may be taller than the window.
+
+    Needed because widget heights depend on the desktop's font size, which
+    varies a lot between a developer's laptop and a remote desktop session.
+    A tab that fits comfortably at one font size silently clips its bottom
+    widgets at another — and a clipped widget looks like a broken feature,
+    not a layout problem, because the button is visible and the output it
+    writes is not.
+
+    Put children into ``.body``.
+    """
+
+    def __init__(self, parent) -> None:
+        super().__init__(parent)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        self._canvas = tk.Canvas(self, highlightthickness=0, borderwidth=0)
+        self._canvas.grid(row=0, column=0, sticky="nsew")
+        self._bar = ttk.Scrollbar(self, orient="vertical",
+                                  command=self._canvas.yview)
+        self._canvas.configure(yscrollcommand=self._on_scroll_set)
+
+        self.body = ttk.Frame(self._canvas, padding=PAD)
+        self._window = self._canvas.create_window((0, 0), window=self.body,
+                                                  anchor="nw")
+
+        self.body.bind("<Configure>", self._on_body_resize)
+        self._canvas.bind("<Configure>", self._on_canvas_resize)
+        # Wheel bindings are per-widget in Tk, and differ by platform:
+        # X11 sends Button-4/5, macOS and Windows send MouseWheel.
+        for seq, delta in (("<Button-4>", -1), ("<Button-5>", 1)):
+            self._canvas.bind_all(seq, self._make_wheel(delta), add="+")
+        self._canvas.bind_all("<MouseWheel>", self._on_mousewheel, add="+")
+
+    def _on_body_resize(self, _event=None) -> None:
+        self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+
+    def _on_canvas_resize(self, event) -> None:
+        # Keep the inner frame as wide as the viewport so wraplength and
+        # sticky="ew" behave as they would without the canvas.
+        self._canvas.itemconfigure(self._window, width=event.width)
+
+    def _on_scroll_set(self, first: str, last: str) -> None:
+        # Only show the scrollbar when it's actually needed, so the common
+        # case looks like an ordinary tab.
+        if float(first) <= 0.0 and float(last) >= 1.0:
+            self._bar.grid_remove()
+        else:
+            self._bar.grid(row=0, column=1, sticky="ns")
+        self._bar.set(first, last)
+
+    def _scrollable(self) -> bool:
+        first, last = self._canvas.yview()
+        return not (first <= 0.0 and last >= 1.0)
+
+    def _pointer_inside(self) -> bool:
+        widget = self.winfo_containing(self.winfo_pointerx(), self.winfo_pointery())
+        while widget is not None:
+            if widget is self:
+                return True
+            widget = getattr(widget, "master", None)
+        return False
+
+    def _make_wheel(self, delta: int):
+        def handler(_event=None):
+            if self._scrollable() and self._pointer_inside():
+                self._canvas.yview_scroll(delta, "units")
+        return handler
+
+    def _on_mousewheel(self, event) -> None:
+        if self._scrollable() and self._pointer_inside():
+            self._canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+
+
 # --------------------------------------------------------------------------
 # Tab 1 — the app
 # --------------------------------------------------------------------------
@@ -199,18 +275,26 @@ class AppTab(ttk.Frame):
 # --------------------------------------------------------------------------
 class DataTab(ttk.Frame):
     def __init__(self, parent, shared: Shared) -> None:
-        super().__init__(parent, padding=PAD)
+        super().__init__(parent)
         self.shared = shared
         self.shared.listeners.append(self._refresh_header)
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(4, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        # This is the tallest tab and its height varies with the selected
+        # transfer route, so it scrolls. Without it the results box at the
+        # bottom is simply unreachable at larger font sizes.
+        self._scroll = ScrollableFrame(self)
+        self._scroll.grid(row=0, column=0, sticky="nsew")
+        body = self._scroll.body
+        body.columnconfigure(0, weight=1)
 
         self.header = tk.StringVar()
-        ttk.Label(self, textvariable=self.header, wraplength=680,
+        ttk.Label(body, textvariable=self.header, wraplength=680,
                   justify="left").grid(row=0, column=0, sticky="w")
 
         # -- where it should end up
-        dest_box = ttk.LabelFrame(self, text="Where your data will live",
+        dest_box = ttk.LabelFrame(body, text="Where your data will live",
                                   padding=PAD)
         dest_box.grid(row=1, column=0, sticky="ew", pady=(PAD, 0))
         dest_box.columnconfigure(0, weight=1)
@@ -245,7 +329,7 @@ class DataTab(ttk.Frame):
         self.persist_btn.grid(row=0, column=1, padx=(PAD, 0))
 
         # -- how to get it there
-        route_box = ttk.LabelFrame(self, text="How to get your data here",
+        route_box = ttk.LabelFrame(body, text="How to get your data here",
                                    padding=PAD)
         route_box.grid(row=2, column=0, sticky="ew", pady=(PAD, 0))
         route_box.columnconfigure(0, weight=1)
@@ -258,13 +342,13 @@ class DataTab(ttk.Frame):
                             variable=self.route_var,
                             command=self._show_route).grid(row=i, column=0, sticky="w")
 
-        self.route_panel = ttk.Frame(self)
+        self.route_panel = ttk.Frame(body)
         self.route_panel.grid(row=3, column=0, sticky="ew", pady=(PAD, 0))
         self.route_panel.columnconfigure(0, weight=1)
 
         # -- did it arrive?
-        check_box = ttk.LabelFrame(self, text="Check what's arrived", padding=PAD)
-        check_box.grid(row=4, column=0, sticky="nsew", pady=(PAD, 0))
+        check_box = ttk.LabelFrame(body, text="Check what's arrived", padding=PAD)
+        check_box.grid(row=4, column=0, sticky="ew", pady=(PAD, 0))
         check_box.columnconfigure(0, weight=1)
         check_box.rowconfigure(1, weight=1)
         ttk.Button(check_box, text="Look in that folder now",
@@ -790,4 +874,5 @@ class MainWindow(ttk.Frame):
         nb.add(self.data_tab, text="2. Your data")
         nb.add(self.deploy_tab, text="3. Publish")
         nb.add(self.manage_tab, text="4. Manage")
+        self.notebook = nb
         self.shared = shared
