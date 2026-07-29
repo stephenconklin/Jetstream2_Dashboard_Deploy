@@ -6,11 +6,21 @@ A single Docker-based workflow for running an app on a Jetstream2 instance, gene
 
 ## Prerequisites
 
-- Jetstream2 instance running **Ubuntu 22.04 (jammy)**, launched via Exosphere.
+- Jetstream2 instance running **Ubuntu 22.04 (jammy) or 24.04 (noble)**, launched via Exosphere. Both are tested; the GUI targets Python 3.10 syntax so it runs on either (24.04 ships 3.12).
 - A fixed/floating IP assigned to the instance.
 - Security group allowing inbound **80/tcp** and **22/tcp**.
 - SSH access as a sudo-capable user (Jetstream2's default `exouser`).
 - Docker preinstalled (Jetstream2's standard Ubuntu image ships with it) — no install step needed. No `sudo`/root needed for anything in this workflow, assuming `exouser` is in the `docker` group, which is Jetstream2's default.
+
+---
+
+## Two ways to use this
+
+**The desktop application** — for researchers. On an instance built from the prepared image, open **Deploy My Dashboard** from the desktop. It walks through choosing your project, getting your data onto the server, publishing, and managing the result, without a terminal. See [The desktop application](#the-desktop-application) below.
+
+**The command line** — everything the application does, it does by running `build_and_run.sh`. If you're comfortable in a shell, use it directly; the two are interchangeable and nothing is hidden from you.
+
+Either way, your project and data have to reach the instance first: see [getting your files onto the instance](getting-your-files-onto-the-instance.md).
 
 ---
 
@@ -48,6 +58,23 @@ A single Docker-based workflow for running an app on a Jetstream2 instance, gene
    ./deploy/build_and_run.sh --dry-run /path/to/project
    ```
 
+   Adding `--porcelain` (only valid with `--dry-run`) prints the same findings as stable `key=value` lines instead of prose — this is what the GUI consumes, and it's useful for scripting a survey of many projects:
+
+   ```console
+   $ ./deploy/build_and_run.sh --dry-run --porcelain /path/to/project
+   framework=r-shiny
+   entry_point_desc=app.R
+   base_image=rocker/geospatial:4.4.1
+   deps_state=will-generate-renv
+   uses_geospatial=1
+   has_data_dir=1
+   has_apt_txt=0
+   container_port=3838
+   data_mount_target=/srv/shiny-server/data
+   ```
+
+   `deps_state` is one of `present`, `will-generate-renv`, `will-generate-from-uv`, or `missing`. Keys may be added in future versions but existing ones won't be renamed, and warnings stay on stderr so capturing stdout gives a clean stream.
+
 4. Visit `http://<instance-fixed-ip>/` in a browser.
 
 **The optional second argument** is the image/container name (default `dashboard-app`). Docker requires it to be lowercase letters, digits, and `.` `_` `-` separators, starting and ending with a letter or digit — `build_and_run.sh` validates this before doing any work and suggests a corrected name, rather than letting `docker build` reject the tag several steps later.
@@ -79,6 +106,7 @@ All optional; each is described in more detail in the relevant section below.
 - **Entry point convention is each framework's own, detected beyond the basic case.** R Shiny: `app.R`, or a `ui.R`/`server.R` pair, or an R Markdown Shiny document (`runtime: shiny` in its YAML front matter, e.g. a flexdashboard) — a golem-packaged app that only ships `inst/app.R` gets a specific error telling you to add a root-level shim, rather than a generic "nothing found." Dash/Python Shiny: `app.py`. Streamlit: `streamlit_app.py` (or `app.py`). No per-project server config is needed since the tool always serves a single app at `/`.
 - **The project's code is baked into the image** at build time (not bind-mounted), so the resulting image is self-contained and versioned.
 - **The build context is filtered, not a straight copy of the project.** `build_and_run.sh` assembles a temp build context with `tar` and skips `data/`, `.git`, `.venv`/`venv`, `.env`, `__pycache__`, `node_modules`, `.Rproj.user` and `.DS_Store`, writing a matching `.dockerignore` alongside as a second line of defence. Two distinct reasons: **size** — these projects routinely carry multi-GB datasets, and copying one into `/tmp` just to delete it (`data/` is bind-mounted at runtime, never baked in) both fills the disk and stalls the upload of the context to the Docker daemon; and **hygiene** — `COPY app/ .` would otherwise bake your `.git` history and any stray `.env` into the image layers, where they'd travel with the image. If your project needs one of these paths at runtime, it belongs under `DATA_DIR`, not in the image.
+- **A `data/` folder in the project is a convenience, not the trigger.** `DATA_DIR` is mounted whenever it is set, whether or not the project contains a `data/` directory. This matters because the recommended arrangement — keeping a large dataset on a storage volume instead of inside the project — *removes* the `data/` folder that the dry-run summary reports on. A project set up correctly can therefore report `data/ directory: not in the project` and still need, and get, a mount. What `has_data_dir` really means is "this project will definitely break without a data mount", not "this project is the only kind that can have one".
 - **Data is bind-mounted AND passed as a container env var, never baked into the image.** If the project has a `data/` directory, `build_and_run.sh` bind-mounts a host path over a framework-specific target (`/srv/shiny-server/data` for R Shiny, `/app/data` for the 3 Python frameworks) at runtime instead of copying its contents into the image, and also sets a `DATA_DIR` env var inside the container pointing at that same path — set `DATA_DIR=/path/to/data ./build_and_run.sh` to specify the host path non-interactively, or leave `DATA_DIR` unset and the script will prompt for it (with a nudge toward the typical Jetstream2 storage volume location, `/media/volume/<volume-name>/...`). Either way, updating the data only needs a `docker restart`, not a rebuild. If the project has no `data/` directory, nothing is prompted or mounted.
   - **What this requires of the app's code:** an R Shiny app must reference files with a project-root-relative path — e.g. `read_csv("data/wq_baltimore.csv")` — since that's what resolves to Shiny Server's `app_dir` (`/srv/shiny-server`) and where the mount lands. A Python app (Dash/Python Shiny/Streamlit) can instead just read `os.environ["DATA_DIR"]` directly — more portable, since it doesn't hardcode a path convention. An app that already has its own env var name for this (e.g. a `VI_DATACUBE_ROOT`-style variable) can bridge with a one-line shim at the top of its entry file: `os.environ.setdefault("VI_DATACUBE_ROOT", os.environ["DATA_DIR"])`.
 - **Each framework has its own internal container port**, looked up in one place (`container_port_for_framework()` in [`deploy/lib/common.sh`](../deploy/lib/common.sh)): 3838 for Shiny Server, 8050 for Dash (gunicorn), 8000 for Python Shiny (`shiny run`), 8501 for Streamlit. Always mapped to host port 80 via `docker run -p 80:<port>` — Docker's port mapping handles the privileged bind, so no Nginx/reverse proxy is needed.
@@ -86,6 +114,7 @@ All optional; each is described in more detail in the relevant section below.
 - **Some Jetstream2 instances block outbound port 80**, which breaks apt entirely (not just flakily) since Ubuntu/Debian's default sources are `http://` mirrors — no amount of retrying fixes a blocked port. `apt_retry.sh` rewrites `/etc/apt/sources.list` and any `/etc/apt/sources.list.d/*.list`/`*.sources` files from `http://` to `https://` before each install attempt, so builds work regardless of the instance's egress rules for port 80. If you hit `Connection failed` / connection timeouts during an apt step, you can confirm this is the cause by running `curl -v http://archive.ubuntu.com/ubuntu/ --max-time 10` vs the same with `https://` on the instance directly — if only the `https://` one succeeds, this is why.
 - **A post-run smoke test catches startup crashes a successful build can't see.** A clean `docker build` + `docker run -d` only proves the image is valid and the container started — not that the app process inside stayed up. After starting the container, `build_and_run.sh` polls `http://localhost:80/` for up to 60s; if the app never responds (e.g. a missing dependency or a bad entry point killed it seconds after startup), it prints the last 50 lines of `docker logs` and exits non-zero instead of reporting success. Requires `curl` on the host — if it's missing, the smoke test is skipped with a warning rather than treated as a hard dependency.
   - **It's a liveness check, not a correctness check.** It cannot catch an error *inside* an app that still serves HTTP: Streamlit and Shiny both catch script-level exceptions and render them in the browser, so a dashboard that throws on a missing data file returns 200 and is reported as deployed — accurately, since it *is* reachable; it just shows a traceback to whoever opens it. Always load the page once after a deploy. The smoke test's job is to stop you from walking away from a container that died on startup, not to verify the dashboard works.
+- **Python builds are NOT pinned to `linux/amd64`, which matters when testing on an Apple Silicon Mac.** They build natively on whatever the host is, and pip resolves wheels per-architecture — so a local build can succeed or fail differently from Jetstream2. A real example: `pandas==0.24.2` has x86_64 wheels but no arm64 ones, so it installs instantly on the instance and tries (and fails) to compile from source on an ARM laptop. Native builds are kept as the default because they're much faster and modern packages behave identically on both; set `BUILD_PLATFORM=linux/amd64` when you specifically need to reproduce what the instance will do.
 - **R Shiny builds are pinned to `linux/amd64` on non-amd64 hosts.** Posit publishes Shiny Server as an amd64-only `.deb`, so `Dockerfile.r-shiny` can't build natively on arm64 — on an Apple Silicon Mac, `gdebi` refuses the package several minutes into the build with an error that never mentions architecture. `resolve_build_platform()` (in [`common.sh`](../deploy/lib/common.sh)) detects a non-amd64 Docker host and adds `--platform linux/amd64`, which builds correctly under emulation, just slowly. Jetstream2 instances are x86_64 so this never applies in production — it exists so a change can actually be smoke-tested locally before deploying. Set `BUILD_PLATFORM` to override. The 3 Python frameworks build natively on either architecture and are unaffected.
 - **The app process is PID 1, so `docker stop`/`docker restart` shut it down gracefully.** Each Dockerfile's `CMD` uses exec form with `exec`, which replaces the shell rather than leaving `/bin/sh` as PID 1. This matters because `sh` does not forward signals: with a plain shell-form `CMD`, `docker stop` would sit through its full 10-second timeout and then `SIGKILL` the app, every time, with no chance for it to close connections or flush state. If you add or change a `CMD`, keep the `["sh", "-c", "exec …"]` shape — the `sh -c` wrapper is what expands `$ENTRY_MODULE`/`$PORT` at runtime, and the `exec` is what makes signals work.
 - Container always runs with `--restart unless-stopped`. Note this means a container whose app crashes on startup restarts in a loop — `docker stop <name>` breaks the loop while you investigate with `docker logs`.
@@ -214,7 +243,83 @@ For Dash/Python Shiny/Streamlit, `requirements.txt` is the direct equivalent of 
 pip freeze > requirements.txt
 ```
 
-Run this inside whatever environment (virtualenv, conda env, or the same base image used for deployment) actually has the app working, so the pinned versions are ones you've confirmed work together. Unlike R's geospatial packages, the 3 Python frameworks and their typical dependencies are mostly pure-Python or ship prebuilt wheels, so version drift against the base image's system libraries is a much rarer problem here — but a project depending on something that compiles from source (e.g. certain `geopandas`/GDAL-adjacent packages) can hit the same class of issue, and the same "pin it explicitly" fix applies.
+Run this inside whatever environment (virtualenv, conda env, or the same base image used for deployment) actually has the app working, so the pinned versions are ones you've confirmed work together.
+
+### When an old project's pins no longer build
+
+A common case with published demo and paper-companion repositories, whose `requirements.txt` was written years ago and pins only *direct* dependencies. Two distinct failures usually appear together, and fixing the first just reveals the second:
+
+1. **A pinned package won't compile against the base image's Python.** e.g. `pandas==0.24.2` fails on `python:3.11-slim` with `fatal error: longintrepr.h: No such file or directory` — CPython made that header private in 3.11. No setuptools version fixes this. But such packages usually *do* have prebuilt wheels for the Python they were released against, so pointing at an older base image avoids compiling entirely: `BASE_IMAGE=python:3.7-slim`.
+2. **Unpinned transitive dependencies have moved on.** `dash==1.12.0` doesn't constrain Flask or Werkzeug, so pip installs current versions and the app dies at *import*, not at build:
+   `ImportError: cannot import name 'get_current_traceback' from 'werkzeug.debug.tbtools'`
+   The fix is to pin what the original author relied on but never declared:
+
+   ```
+   werkzeug<2.1
+   flask<2.2
+   itsdangerous<2.1
+   jinja2<3.1
+   ```
+
+Worth being explicit about the tradeoff: an end-of-life Python receives no security updates. It's a reasonable way to get an old dashboard running and evaluate it; it isn't a good long-term home for something publicly reachable. The durable fix is updating the pins, which for a Dash app of this vintage also means porting `import dash_core_components as dcc` to the modern `from dash import dcc`. Unlike R's geospatial packages, the 3 Python frameworks and their typical dependencies are mostly pure-Python or ship prebuilt wheels, so version drift against the base image's system libraries is a much rarer problem here — but a project depending on something that compiles from source (e.g. certain `geopandas`/GDAL-adjacent packages) can hit the same class of issue, and the same "pin it explicitly" fix applies.
+
+---
+
+## The desktop application
+
+A Tkinter front end for everything above, aimed at researchers who'd rather not use a terminal. It is a **thin layer**: every action shells out to `build_and_run.sh` or `manage.sh`, so the two paths cannot drift apart, and any error you see is the script's own message rather than a paraphrase.
+
+Start it from the desktop icon, or by hand:
+
+```bash
+./deploy/gui/launch_gui.sh
+```
+
+Four tabs, read left to right:
+
+1. **Your app** — point it at a folder already on the server, clone a Git address, or unpack a `.zip`. It immediately reports the framework it detected and the entry point it found.
+2. **Your data** — choose where your data lives (attached storage volumes are listed first, with free space), pick a transfer route, and verify what arrived. It always shows the host-path → container-path mapping, which is the detail people most often get wrong.
+3. **Publish** — a plain-English readiness summary, then the build with live output. The button stays disabled until the project is actually deployable.
+4. **Manage** — status and URL, the app's own logs, restart, stop, and republish.
+
+Three behaviours worth knowing about:
+
+- **A build survives losing the desktop session.** Builds run detached and write to `~/dashboard-deploy-logs/`; the window only tails that file. If your remote-desktop connection drops mid-build — or you close the window — the build carries on, and reopening the application reattaches to it. Every publish leaves a timestamped log, which is the most useful thing to send if you need help.
+- **It never claims your dashboard is correct.** The post-publish message says the app is *live* and asks you to open it, because the underlying check only proves the app is answering. Shiny and Streamlit render their own errors in the browser and still return HTTP 200 — see the smoke-test note above.
+- **It can make your data volume survive a reboot.** If your data is on a volume that isn't in `/etc/fstab`, the data tab offers to add it, showing the exact line first and asking for an administrator password via the system's own dialog. See [Reboot persistence](#reboot-persistence).
+
+### Reboot persistence
+
+A volume mounted by hand does **not** come back after a reboot. When that happens, Docker silently creates an empty directory at the expected path and mounts that instead, so the dashboard restarts with no data — and because the smoke test only proves liveness, the deploy still reports success.
+
+[`deploy/lib/persist_mount.sh`](../deploy/lib/persist_mount.sh) fixes this by adding an `/etc/fstab` entry. It runs as root (via `pkexec`), and is written defensively because a bad fstab can leave an instance unbootable at an emergency console a remote-desktop user cannot reach:
+
+- `nofail`, so a detached volume never blocks boot, plus `x-systemd.device-timeout=10s`, since `nofail` alone still lets systemd wait 90 seconds for a missing device.
+- The existing file is backed up, then the result is validated with `findmnt --verify` and `mount -a`; if either complains, the backup is restored automatically.
+- `systemctl daemon-reload` before mounting, because systemd caches mount units generated from fstab — skipping it produces the classic "worked when I tested it, did nothing after reboot".
+- Idempotent: an entry for the same UUID *or* mountpoint is reported and left alone, so pressing the button twice cannot create a duplicate.
+
+To do it manually instead:
+
+```bash
+sudo /usr/local/libexec/persist_mount.sh <uuid> /media/volume/<name> ext4
+# check without changing anything (no root needed):
+./deploy/lib/persist_mount.sh --check <uuid> /media/volume/<name>
+```
+
+Afterwards, the only test that really counts is rebooting and confirming the data is still there.
+
+### Building the researcher image
+
+[`deploy/desktop/setup_image.sh`](../deploy/desktop/setup_image.sh) prepares an instance to be saved as the image researchers clone. Run it once on a fresh instance, then create the image in Exosphere:
+
+```bash
+sudo ./deploy/desktop/setup_image.sh
+```
+
+It installs `python3-tk` (**not** part of `python3` on Ubuntu — without it the desktop icon silently does nothing), `policykit-1`, `zenity`, `xdg-utils` and the transfer tools; clones this repo; installs the desktop launcher to both the applications menu and `~/Desktop` with the executable bit *and* GNOME's "trusted" flag; installs `persist_mount.sh` to `/usr/local/libexec`; adds an SSH login banner; and pre-pulls all three base images. That last one matters: `rocker/geospatial` is several GB, and pulling it during a researcher's first publish looks like a ten-minute hang.
+
+It's idempotent, so re-run it to refresh an existing image.
 
 ---
 

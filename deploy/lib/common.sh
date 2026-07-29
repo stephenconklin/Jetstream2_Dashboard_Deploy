@@ -18,6 +18,18 @@ cleanup_build_ctx() {
     rm -rf "$BUILD_CTX"
   fi
   BUILD_CTX=""
+  cleanup_preflight_containers
+}
+
+# `docker run` is only a client: if this script is interrupted, the
+# container it started keeps running on the daemon, and the `--rm` never
+# fires because the container never exits. A cancelled R Shiny build would
+# otherwise leave an renv install consuming CPU indefinitely. The preflight
+# containers are given predictable names precisely so they can be found and
+# removed here.
+cleanup_preflight_containers() {
+  local base="${IMAGE_NAME:-dashboard-app}"
+  docker rm -f "${base}-lockgen" "${base}-uvgen" >/dev/null 2>&1 || true
 }
 # INT/TERM get their own handlers that exit explicitly: a bare signal trap
 # runs the handler and then *resumes* the script, which on Ctrl-C during a
@@ -75,9 +87,48 @@ print_dry_run_summary() {
   echo "Entry point:     $ENTRY_POINT_DESC"
   echo "Base image:      $BASE_IMAGE"
   echo "Dependencies:    $deps_status"
-  echo "data/ directory: $([[ "$has_data_dir" -eq 1 ]] && echo "present (DATA_DIR would be required, prompted for if unset)" || echo none)"
+  # When absent, say what to do about it rather than just "none". Moving
+  # data out of the project onto a storage volume is the recommended
+  # arrangement, and it makes this read "none" — so a bare "none" is most
+  # misleading for exactly the projects that are set up correctly.
+  echo "data/ directory: $([[ "$has_data_dir" -eq 1 ]] \
+    && echo "present (DATA_DIR would be required, prompted for if unset)" \
+    || echo "not in the project (set DATA_DIR=/path to mount data from elsewhere)")"
   echo "apt.txt:         $([[ "$has_apt_txt" -eq 1 ]] && echo present || echo "absent/empty")"
   echo "==========================================="
+}
+
+# The --dry-run summary again, as stable `key=value` lines for programs
+# (the Tkinter GUI in deploy/gui/) instead of prose for people.
+#
+# key=value rather than JSON on purpose: every value here is a single line
+# with no `=` in the key, so parsing is `line.split("=", 1)` and emitting
+# needs no escaping — whereas hand-rolling JSON string escaping in bash is
+# exactly the kind of thing that looks fine until a project path contains a
+# quote or a backslash.
+#
+# The contract this promises to callers:
+#   - keys are stable; new keys may be ADDED, existing ones not renamed
+#   - values are single-line and never quoted
+#   - this goes to stdout alone; warnings still go to stderr, so a caller
+#     capturing stdout gets a clean stream
+#
+# container_port and data_mount_target are included specifically so a caller
+# never hardcodes 3838/8050/8000/8501 or the two mount paths — they come from
+# the same lookup functions the deploy itself uses, above.
+print_dry_run_porcelain() {
+  local deps_state="$1" has_data_dir="$2" has_apt_txt="$3" uses_geospatial="$4"
+  echo "project_dir=$PROJECT_DIR"
+  echo "framework=$FRAMEWORK"
+  echo "entry_file=${ENTRY_FILE:-}"
+  echo "entry_point_desc=$ENTRY_POINT_DESC"
+  echo "base_image=$BASE_IMAGE"
+  echo "deps_state=$deps_state"
+  echo "uses_geospatial=$uses_geospatial"
+  echo "has_data_dir=$has_data_dir"
+  echo "has_apt_txt=$has_apt_txt"
+  echo "container_port=$(container_port_for_framework "$FRAMEWORK")"
+  echo "data_mount_target=$(container_data_mount_target_for_framework "$FRAMEWORK")"
 }
 
 # Data is never baked into the image. If the project ships a data/ directory
@@ -174,7 +225,15 @@ generate_renv_lock() {
   local run_platform_args=()
   [[ -n "${BUILD_PLATFORM:-}" ]] && run_platform_args=(--platform "$BUILD_PLATFORM")
 
-  if ! docker run --rm \
+  # Named so it can be found and removed if this build is interrupted.
+  # `docker run` is only a client: killing it leaves the container running
+  # on the daemon, and --rm never fires because the container never exits.
+  # A cancelled R build would otherwise leave an renv install burning CPU
+  # on the instance indefinitely.
+  local lockgen_name="${real_image_name}-lockgen"
+  docker rm -f "$lockgen_name" >/dev/null 2>&1 || true
+
+  if ! docker run --rm --name "$lockgen_name" \
     "${run_platform_args[@]+"${run_platform_args[@]}"}" \
     -v "$(cd "$PROJECT_DIR" && pwd):/app" \
     -v "$TOOLING_DIR/docker/generate_lock.R:/tmp/generate_lock.R:ro" \
@@ -214,7 +273,11 @@ generate_requirements_from_uv() {
   # ghcr.io/astral-sh/uv's ENTRYPOINT is already `uv`, so the command here
   # is just its arguments (no leading `uv` — that would be parsed as an
   # unrecognized `uv uv export` subcommand).
-  if ! docker run --rm \
+  # Named for the same reason as the lockfile container above.
+  local uvgen_name="${IMAGE_NAME:-dashboard-app}-uvgen"
+  docker rm -f "$uvgen_name" >/dev/null 2>&1 || true
+
+  if ! docker run --rm --name "$uvgen_name" \
     -v "$(cd "$PROJECT_DIR" && pwd):/app" -w /app \
     ghcr.io/astral-sh/uv:latest \
     export --no-hashes --frozen -o requirements.txt; then
@@ -296,6 +359,9 @@ DOCKERIGNORE
   local platform_args=()
   [[ -n "${BUILD_PLATFORM:-}" ]] && platform_args=(--platform "$BUILD_PLATFORM")
 
+  local build_log
+  build_log="$(mktemp)"
+
   local build_tries=3 attempt build_ok=0
   for attempt in $(seq 1 "$build_tries"); do
     if docker build \
@@ -304,21 +370,88 @@ DOCKERIGNORE
       "${target_args[@]+"${target_args[@]}"}" \
       "${platform_args[@]+"${platform_args[@]}"}" \
       -t "$IMAGE_NAME:latest" \
-      "$build_ctx"; then
+      "$build_ctx" 2>&1 | tee "$build_log"; then
       build_ok=1
       break
     fi
+
+    # The retries exist for transient mirror/network hiccups. A dependency
+    # that cannot be built will fail identically every time, so retrying it
+    # just burns 20 seconds and prints the same error three times, pushing
+    # the real cause further up the log — which is where a researcher then
+    # has to go looking for it.
+    if build_failure_is_permanent "$build_log"; then
+      echo >&2
+      echo "This is a problem with the project's dependencies, not a network" >&2
+      echo "hiccup — retrying wouldn't help, so stopping here." >&2
+      break
+    fi
+
     if [[ "$attempt" -lt "$build_tries" ]]; then
       echo "docker build failed (attempt $attempt/$build_tries) — retrying in 10s..." >&2
       sleep 10
     fi
   done
+
   if [[ "$build_ok" -ne 1 ]]; then
-    echo "docker build failed after $build_tries attempts." >&2
+    summarize_build_failure "$build_log"
+    rm -f "$build_log"
     exit 1   # EXIT trap cleans up $BUILD_CTX
   fi
 
+  rm -f "$build_log"
   cleanup_build_ctx
+}
+
+# Distinguish "this will never work" from "the network wobbled".
+# Deliberately conservative: anything not listed here is still retried, so a
+# misclassification costs a slower failure rather than a missed recovery.
+build_failure_is_permanent() {
+  grep -qE \
+    'metadata-generation-failed|Could not build wheels|legacy-install-failure|fatal error:|Could not find a version that satisfies|No matching distribution found|invalid tag|pull access denied|manifest unknown|manifest for .* not found|Unable to locate package|has no installation candidate|undefined reference to|configure: error:' \
+    "$1"
+}
+
+# Pull the actual reason out of a long build log.
+#
+# Without this the last line a researcher sees is "docker build failed",
+# with the cause hundreds of lines up — and after a --no-cache rebuild of an
+# R geospatial image, "up" can mean tens of thousands of lines.
+summarize_build_failure() {
+  local log="$1"
+  echo >&2
+  echo "=== The build failed. The relevant part of the log: ===" >&2
+
+  # Two tiers. First look for the specific complaint from pip, apt, gcc or R;
+  # only fall back to docker's own "did not complete successfully" wrapper,
+  # which names the failing RUN line but not the reason.
+  #
+  # Note the deliberate absence of a `^` anchor: BuildKit prefixes every line
+  # of build output with a step/timestamp ("6.622 error: ..."), so anchored
+  # patterns match nothing at all.
+  local specific generic
+  specific="$(grep -iE \
+      'error in .+ setup command|metadata-generation-failed|Could not build wheels|Failed building wheel|No matching distribution|Could not find a version that satisfies|fatal error:|Unable to locate package|has no installation candidate|undefined reference to|there is no package called|installation of package .+ had non-zero exit status|configure: error:' \
+      "$log" \
+    | grep -viE 'this error originates from a subprocess|hint: See above|note: This' \
+    | tail -6)"
+
+  generic="$(grep -iE 'did not complete successfully|returned a non-zero code' "$log" | tail -2)"
+
+  if [[ -n "$specific" ]]; then
+    printf '%s\n' "$specific" >&2
+    [[ -n "$generic" ]] && printf '\n%s\n' "$generic" >&2
+  elif [[ -n "$generic" ]]; then
+    printf '%s\n' "$generic" >&2
+  else
+    tail -15 "$log" >&2
+  fi
+
+  echo >&2
+  echo "A pinned package that won't build is the most common cause. If the" >&2
+  echo "version is old, it may predate the Python or R in the base image —" >&2
+  echo "either relax the pin, or set BASE_IMAGE to an older one." >&2
+  echo "See docs/deployment.md's 'Pinning' sections." >&2
 }
 
 # `docker rm -f` + `docker run -d`, parameterized by internal port and data
