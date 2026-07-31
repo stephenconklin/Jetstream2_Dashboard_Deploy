@@ -271,50 +271,6 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Free port 80
-#
-# Ordering matters: the Debian nginx package starts the service in its
-# postinst, and a bind failure there leaves dpkg half-configured and needing
-# manual repair. So whatever holds port 80 has to go first.
-#
-# On an instance where a dashboard is already deployed, that is the app
-# container itself — which means taking the dashboard offline. It comes back
-# as soon as it is re-published, and this is the only moment of downtime in
-# the whole transition, but it is not something to do behind someone's back.
-# ---------------------------------------------------------------------------
-step "Port 80"
-PORT80_CONTAINERS="$(docker ps -aq --filter "publish=80" 2>/dev/null || true)"
-if [[ -n "$PORT80_CONTAINERS" ]]; then
-  PORT80_NAMES="$(docker ps -a --filter "publish=80" --format '{{.Names}}' | tr '\n' ' ')"
-  echo
-  echo "    A container is bound to host port 80: ${PORT80_NAMES% }"
-  echo "    nginx needs that port, so it has to be removed and re-published"
-  echo "    behind the proxy. The image is kept, so re-publishing is a fast"
-  echo "    restart rather than a rebuild."
-  echo
-  if [[ "$ASSUME_YES" -eq 0 && -z "$PROJECT_DIR" && -t 0 ]]; then
-    read -rp "    Take the dashboard offline and continue? [y/N] " reply
-    [[ "$reply" =~ ^[Yy]$ ]] || die "Stopped at your request. Nothing has been changed."
-  elif [[ "$ASSUME_YES" -eq 0 && -z "$PROJECT_DIR" ]]; then
-    die "A container holds port 80 and there is no terminal to confirm removing it.
-       Re-run with a project directory (which re-publishes automatically):
-         sudo $0 /path/to/your/project
-       or confirm non-interactively:
-         sudo $0 --yes"
-  fi
-  # shellcheck disable=SC2086
-  docker rm -f $PORT80_CONTAINERS >/dev/null
-  ok "removed ${PORT80_NAMES% }"
-elif ss -tlnp 2>/dev/null | grep -q ':80 ' && ! ss -tlnp 2>/dev/null | grep ':80 ' | grep -q nginx; then
-  echo
-  ss -tlnp 2>/dev/null | grep ':80 ' | sed 's/^/    /' || true
-  die "Port 80 is held by something other than nginx or a container (shown above).
-       Stop that service and re-run."
-else
-  ok "free"
-fi
-
-# ---------------------------------------------------------------------------
 # Proxy state file — written BEFORE nginx, so that if anything below fails,
 # a subsequent build_and_run.sh still binds loopback rather than racing nginx
 # for port 80.
@@ -337,10 +293,37 @@ chmod 0644 "$PROXY_STATE_FILE"
 ok "$PROXY_STATE_FILE (app -> 127.0.0.1:$APP_HOST_PORT)"
 
 # ---------------------------------------------------------------------------
-# nginx
+# nginx — install and validate, but do NOT start
+#
+# Everything in this step is non-destructive, and that is the point of where
+# it sits. On an instance that is already serving a dashboard, the container
+# still holds port 80 at this moment; taking it down is the next step. Doing
+# all the fallible work first — the package install, rendering the template,
+# `nginx -t` — means a bad config or a failed download stops the script while
+# the old dashboard is still up and serving, rather than after it has been
+# removed. Downtime is then just the gap between the next two steps.
+#
+# nginx must not start during `apt-get install`, or its postinst fails trying
+# to bind the port the dashboard is still using — which leaves dpkg
+# half-configured and needing manual repair. policy-rc.d returning 101 is
+# Debian's own mechanism for exactly this: it tells the maintainer scripts
+# not to start services, and is removed again immediately afterwards.
 # ---------------------------------------------------------------------------
 step "nginx reverse proxy"
-command -v nginx >/dev/null 2>&1 || { apt-get install -y -qq nginx >/dev/null; ok "nginx installed"; }
+if command -v nginx >/dev/null 2>&1; then
+  skip "nginx installed"
+else
+  POLICY_RC="/usr/sbin/policy-rc.d"
+  POLICY_RC_EXISTED=0
+  [[ -e "$POLICY_RC" ]] && POLICY_RC_EXISTED=1
+  if [[ "$POLICY_RC_EXISTED" -eq 0 ]]; then
+    printf '#!/bin/sh\nexit 101\n' > "$POLICY_RC"
+    chmod 0755 "$POLICY_RC"
+  fi
+  apt-get install -y -qq nginx >/dev/null
+  [[ "$POLICY_RC_EXISTED" -eq 0 ]] && rm -f "$POLICY_RC"
+  ok "nginx installed (not started yet — port 80 is still the dashboard's)"
+fi
 
 install -d -m 0755 "$MAINTENANCE_ROOT/_deploy"
 install -m 0644 "$SCRIPT_DIR/nginx/unavailable.html" "$MAINTENANCE_ROOT/_deploy/unavailable.html"
@@ -372,7 +355,59 @@ sed -e "s|__SERVER_NAME__|${SERVER_NAME:-_}|g" \
 rm -f /etc/nginx/sites-enabled/default
 ln -sf "$NGINX_SITE" /etc/nginx/sites-enabled/dashboard
 
-nginx -t 2>/dev/null || { nginx -t; die "nginx config test failed — not reloading."; }
+# The validation gate. `nginx -t` parses the config without binding anything,
+# so it is safe to run while the dashboard still owns port 80 — and failing
+# here costs nothing, because nothing has been taken down yet.
+nginx -t 2>/dev/null || { nginx -t; die "nginx config test failed — nothing has been taken offline."; }
+ok "config valid ($NGINX_SITE)"
+
+# ---------------------------------------------------------------------------
+# Cutover: free port 80, then start nginx on it
+#
+# This is the only moment of downtime in the whole transition, and everything
+# that could fail has already been done. On an instance already serving a
+# dashboard, port 80 is held by the app container itself, so freeing it means
+# taking the dashboard offline — not something to do behind someone's back.
+# It comes back when it is re-published, which this script does for you if you
+# passed a project directory.
+# ---------------------------------------------------------------------------
+step "Cutover"
+PORT80_CONTAINERS="$(docker ps -aq --filter "publish=80" 2>/dev/null || true)"
+if [[ -n "$PORT80_CONTAINERS" ]]; then
+  PORT80_NAMES="$(docker ps -a --filter "publish=80" --format '{{.Names}}' | tr '\n' ' ')"
+  echo
+  echo "    A container is bound to host port 80: ${PORT80_NAMES% }"
+  echo "    nginx needs that port, so it has to be removed and re-published"
+  echo "    behind the proxy. The image is kept, so re-publishing is a fast"
+  echo "    cached rebuild rather than a full one."
+  echo
+  if [[ "$ASSUME_YES" -eq 0 && -z "$PROJECT_DIR" && -t 0 ]]; then
+    echo "    You did not pass a project directory, so nothing will re-publish"
+    echo "    it automatically — you will need to run build_and_run.sh yourself"
+    echo "    afterwards. Ctrl-C now and re-run as:"
+    echo "      sudo $0 /path/to/your/project"
+    echo
+    read -rp "    Take the dashboard offline and continue anyway? [y/N] " reply
+    [[ "$reply" =~ ^[Yy]$ ]] || die "Stopped at your request. Nothing has been taken offline."
+  elif [[ "$ASSUME_YES" -eq 0 && -z "$PROJECT_DIR" ]]; then
+    die "A container holds port 80 and there is no terminal to confirm removing it.
+       Re-run with a project directory (which re-publishes automatically):
+         sudo $0 /path/to/your/project
+       or confirm non-interactively:
+         sudo $0 --yes"
+  fi
+  # shellcheck disable=SC2086
+  docker rm -f $PORT80_CONTAINERS >/dev/null
+  ok "removed ${PORT80_NAMES% } — the dashboard is offline from here until it re-publishes"
+elif ss -tlnp 2>/dev/null | grep -q ':80 ' && ! ss -tlnp 2>/dev/null | grep ':80 ' | grep -q nginx; then
+  echo
+  ss -tlnp 2>/dev/null | grep ':80 ' | sed 's/^/    /' || true
+  die "Port 80 is held by something other than nginx or a container (shown above).
+       Stop that service and re-run. Nothing has been taken offline."
+else
+  ok "port 80 free"
+fi
+
 systemctl enable nginx >/dev/null 2>&1 || true
 systemctl restart nginx
 ok "nginx serving :80 -> 127.0.0.1:$APP_HOST_PORT"

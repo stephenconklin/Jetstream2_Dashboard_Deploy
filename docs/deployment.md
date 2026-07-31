@@ -56,9 +56,15 @@ The script is **idempotent**: re-running it is the normal way to apply a change 
 
 ### Running it on an instance that already serves a dashboard
 
-nginx needs port 80, and an existing deployment is holding it. Bootstrap detects this, asks before removing that container, and — if you passed a project directory — re-publishes it behind the proxy at the end. Expect **a couple of minutes of downtime** across the cutover. The image is kept, so re-publishing is a restart rather than a rebuild.
+nginx needs port 80, and an existing deployment is holding it. Everything fallible happens **before** anything is taken down — the package install, rendering the config, and `nginx -t` all run while the old dashboard is still serving, so a bad config or a failed download stops the script with the site still up. Only then does the `Cutover` step remove the container and start nginx.
 
-If you'd rather not be asked (an unattended run), pass `--yes`.
+Pass the project directory so it re-publishes in the same run:
+
+```bash
+sudo ./deploy/bootstrap.sh /path/to/my/project
+```
+
+Downtime is then the rebuild, typically a couple of minutes since Docker's layer cache is warm. Without a project directory, bootstrap warns, asks for confirmation, and leaves the site down until you run `build_and_run.sh` yourself. `--yes` skips the prompt for unattended runs.
 
 ### Rolling back
 
