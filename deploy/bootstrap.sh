@@ -271,6 +271,40 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Disk space
+#
+# Reported here rather than left to fail later, because running out of it
+# mid-build is one of the least legible failures this tool can produce: the
+# error surfaces as a compile or extraction error hundreds of lines into a
+# build log, naming a file rather than the disk. An R geospatial image is
+# ~6-8GB on top of a ~4.5GB rocker/geospatial base, and Docker's build cache
+# grows with every rebuild on top of that.
+#
+# A warning, not a hard failure: the threshold is a rule of thumb, the exact
+# need depends entirely on the project, and the Python frameworks are far
+# lighter than the R ones. Refusing to provision a host over it would be
+# wrong.
+# ---------------------------------------------------------------------------
+step "Disk space"
+# An unparseable answer means `df` did not support these flags, not that the
+# disk is full. Say nothing rather than warn about "0GB free", which would be
+# alarming and wrong.
+FREE_GB="$(df -BG --output=avail / 2>/dev/null | tail -1 | tr -dc '0-9')"
+if [[ -z "$FREE_GB" ]]; then
+  skip "could not read free space on /"
+elif [[ "$FREE_GB" -lt 15 ]]; then
+  warn "only ${FREE_GB}GB free on / — an R geospatial build can want more than that.
+         Reclaim space before publishing if a build fails partway:
+           docker system df           # see where it has gone
+           docker image prune -f      # dangling layers; safe, touches nothing running
+           docker builder prune -f    # build cache; costs a slower next build
+         A stale dashboard image is often the largest single item, and is safe
+         to remove because the next publish rebuilds it."
+else
+  ok "${FREE_GB}GB free on /"
+fi
+
+# ---------------------------------------------------------------------------
 # Proxy state file — written BEFORE nginx, so that if anything below fails,
 # a subsequent build_and_run.sh still binds loopback rather than racing nginx
 # for port 80.
