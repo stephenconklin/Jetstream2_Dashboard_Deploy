@@ -1,0 +1,169 @@
+# nginx reverse proxy for a Jetstream2 dashboard deployment.
+#
+# Rendered by deploy/bootstrap.sh (which substitutes the double-underscore
+# tokens) into /etc/nginx/sites-available/dashboard. Do NOT edit that copy —
+# edit this template and re-run bootstrap.sh, or the next run overwrites it.
+#
+# Why a proxy at all, when the container could just publish port 80 itself:
+#
+#   * A dashboard framework's built-in server is a development server. Shiny
+#     Server, `streamlit run` and gunicorn all serve requests from a small
+#     fixed pool of workers/threads, so one slow or stalled client holds a
+#     worker for the whole conversation. nginx buffers each complete request
+#     before contacting the app, so a slow client costs an event-driven nginx
+#     connection instead of an app worker.
+#   * It is where rate limiting, TLS, gzip and a real maintenance page can
+#     live without any of it being the app's problem.
+#   * The app then binds 127.0.0.1 only and is never directly reachable from
+#     the internet.
+#
+# ---------------------------------------------------------------------------
+# WebSockets are NOT optional here
+# ---------------------------------------------------------------------------
+# Three of the four supported frameworks are useless without them: R Shiny and
+# Python Shiny push every reactive update over a WebSocket (SockJS, with an
+# XHR-streaming fallback), and Streamlit's entire client-server protocol is a
+# single Tornado WebSocket. Only Dash works over plain XHR. Two consequences
+# are load-bearing below and must not be "tidied up":
+#
+#   * `Connection` is set from the $dashboard_conn_upgrade map, not hardcoded
+#     to "upgrade". Sending `Connection: upgrade` on ordinary requests breaks
+#     upstream keepalive; sending nothing at all breaks the WebSocket
+#     handshake. Only a map gets both right.
+#   * proxy_read_timeout is long. A Shiny or Streamlit socket sits idle
+#     whenever the researcher isn't clicking, and nginx's 60s default tears it
+#     down mid-session — which the frameworks surface as "Disconnected from
+#     server" or a greyed-out page, with nothing in the app's own log.
+
+# Maps $http_upgrade to the correct Connection header. http{} context, so it
+# sits outside the server block below.
+#
+# The empty case maps to an empty value, NOT to "close". Much WebSocket
+# documentation says "close" here, but that is written for configs with no
+# upstream keepalive: `Connection: close` tells the app server to hang up
+# after every response, which silently defeats the `keepalive 32` below and
+# opens a fresh TCP connection for each of the dozens of asset requests in a
+# single dashboard page load. An empty Connection header, combined with
+# proxy_http_version 1.1, is what lets nginx reuse upstream connections while
+# still upgrading the ones that ask to be upgraded.
+map $http_upgrade $dashboard_conn_upgrade {
+    default upgrade;
+    ''      "";
+}
+
+# Rate limit keyed by client IP. The default sits far above what a human
+# driving a dashboard generates — one page load of a Shiny or Streamlit app is
+# a burst of dozens of asset and callback requests, hence the generous burst —
+# and far below a scanner sweep. Tune via deploy/deploy.env.
+limit_req_zone $binary_remote_addr zone=dashreq:10m rate=__RATE_LIMIT__;
+
+# Per-IP connection cap: the direct defence against the slow-client worker
+# starvation this proxy exists to prevent. Note each open browser tab of a
+# Shiny/Streamlit app holds one long-lived WebSocket, so this cannot be set as
+# tightly as it could for a request/response app.
+limit_conn_zone $binary_remote_addr zone=dashconn:10m;
+
+upstream dashboard_app {
+    server 127.0.0.1:__APP_HOST_PORT__ fail_timeout=0s;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    # Rendered as a comment by bootstrap.sh on a host with IPv6 disabled: nginx
+    # refuses to start at all ("socket() [::]:80 failed") rather than skipping
+    # an address family it cannot bind, which would fail the whole provision
+    # over a listener most Jetstream2 instances never need.
+    __LISTEN_IPV6__
+    server_name __SERVER_NAME__;
+
+    server_tokens off;
+
+    # Shiny's fileInput and Streamlit's st.file_uploader both POST through
+    # here. nginx's 1m default rejects an ordinary CSV upload with a 413 that
+    # the app never sees and cannot explain.
+    client_max_body_size __CLIENT_MAX_BODY_SIZE__;
+    client_body_timeout 60s;
+    client_header_timeout 30s;
+
+    # Buffer the whole request before touching the app. This is the point of
+    # the exercise: a slow uploader must never occupy an app worker.
+    proxy_request_buffering on;
+
+    # Response buffering is deliberately OFF, unlike the request side. These
+    # frameworks stream: Shiny's SockJS XHR-streaming fallback and Streamlit's
+    # incremental reruns both deliver a response progressively, and buffering
+    # them makes the UI appear to freeze until the transfer completes. The
+    # cost is that nginx no longer shields the app from a slow *reader*; the
+    # per-IP connection cap above is what limits that instead.
+    proxy_buffering off;
+
+    proxy_connect_timeout 10s;
+    # Long by design — see the WebSocket note in the header. This is an idle
+    # timeout on an established connection, not a cap on request duration, so
+    # a large value does not leave dead connections around: TCP keepalive and
+    # the frameworks' own heartbeats still reap them.
+    proxy_send_timeout __PROXY_TIMEOUT__;
+    proxy_read_timeout __PROXY_TIMEOUT__;
+
+    gzip on;
+    gzip_proxied any;
+    gzip_min_length 1024;
+    gzip_comp_level 5;
+    gzip_types application/json application/javascript text/javascript text/css
+               text/plain image/svg+xml application/manifest+json;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    # Deliberately no X-Frame-Options: embedding a dashboard in an iframe on a
+    # project or lab page is a normal thing for researchers to want.
+
+    access_log /var/log/nginx/dashboard.access.log;
+    error_log  /var/log/nginx/dashboard.error.log;
+
+    # nginx's own liveness, answered without touching the app. manage.sh uses
+    # this to tell "the proxy is down" apart from "the dashboard is down" —
+    # the two need completely different fixes, and a bare 502 looks identical.
+    # Cannot collide with an app route: the whole /_deploy/ prefix is reserved
+    # by this tooling and documented as such.
+    location = /_deploy/health {
+        access_log off;
+        default_type text/plain;
+        return 200 "nginx-ok\n";
+    }
+
+    # A researcher who opens the URL while the container is rebuilding, or
+    # after stopping it, gets an explanation instead of nginx's bare "502 Bad
+    # Gateway" — which reliably reads as "I broke the server".
+    error_page 502 503 504 /_deploy/unavailable.html;
+    location = /_deploy/unavailable.html {
+        internal;
+        root __MAINTENANCE_ROOT__;
+        add_header Retry-After 30 always;
+        add_header Cache-Control "no-store" always;
+    }
+
+    location / {
+        limit_req  zone=dashreq burst=__RATE_BURST__ nodelay;
+        limit_conn dashconn __CONN_LIMIT__;
+
+        proxy_pass http://dashboard_app;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host  $host;
+
+        # See the WebSocket note in the header — $dashboard_conn_upgrade, not
+        # a hardcoded "upgrade".
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $dashboard_conn_upgrade;
+
+        # Shiny Server and Streamlit both redirect to their own idea of the
+        # host on some paths; rewrite those back to what the browser asked
+        # for rather than leaking 127.0.0.1:__APP_HOST_PORT__.
+        proxy_redirect http://127.0.0.1:__APP_HOST_PORT__/ /;
+    }
+}

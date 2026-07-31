@@ -357,6 +357,48 @@ def container_status() -> dict[str, str]:
     return out
 
 
+def health() -> dict[str, str]:
+    """Live diagnosis from ``manage.sh health --porcelain``.
+
+    Distinct from ``container_status()``: that answers "is it up?", this
+    answers "which layer is broken?" — the app, the nginx proxy in front of
+    it, or neither. Once a proxy is involved those look identical from a
+    browser and need different fixes, so the shell computes the verdict and
+    the GUI only renders it.
+
+    Empty dict when the command isn't available or fails, so callers can fall
+    back to the simpler status display rather than showing an error.
+    """
+    if not MANAGE.exists():
+        return {}
+    # Longer than the other verbs: this runs several HTTP probes plus a
+    # `docker stats` sample, and a wedged app makes each probe wait out its
+    # own timeout rather than failing fast.
+    proc = _run([str(MANAGE), "health", "--porcelain"], timeout=90)
+    if proc.returncode != 0:
+        return {}
+    out: dict[str, str] = {}
+    for line in proc.stdout.splitlines():
+        key, _, value = line.strip().partition("=")
+        if key:
+            out[key] = value
+    return out
+
+
+# What each verdict from manage.sh means, in the words a researcher needs.
+# Keyed by the shell's stable enum rather than by parsing its prose, the same
+# rule the porcelain contract exists to enforce everywhere else.
+HEALTH_HEADLINES = {
+    "ok": "Everything is working.",
+    "not-deployed": "Nothing is published yet.",
+    "stopped": "Your dashboard is stopped.",
+    "app-not-responding": "Your dashboard isn't answering.",
+    "proxy-down": "The web server in front of your dashboard is down.",
+    "proxy-cannot-reach-app": "The web server can't reach your dashboard.",
+    "unhealthy": "Your dashboard is answering, but something is wrong with it.",
+}
+
+
 def manage(action: str) -> str:
     """Run a manage.sh verb (restart/stop/logs). Returns its stdout."""
     proc = _run([str(MANAGE), action], timeout=120)

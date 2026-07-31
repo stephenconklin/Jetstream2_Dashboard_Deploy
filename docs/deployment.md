@@ -1,6 +1,8 @@
 # Deploying a dashboard/app to Jetstream2
 
-A single Docker-based workflow for running an app on a Jetstream2 instance, generic across **R Shiny**, **Plotly Dash**, **Python Shiny**, and **Streamlit**. Assumes **one instance per project/researcher** — no multi-tenant package conflicts to manage, and the app is reachable directly on port 80 at the instance's fixed IP.
+A single Docker-based workflow for running an app on a Jetstream2 instance, generic across **R Shiny**, **Plotly Dash**, **Python Shiny**, and **Streamlit**. Assumes **one instance per project/researcher** — no multi-tenant package conflicts to manage.
+
+The app is reachable on port 80 at the instance's fixed IP. On an instance provisioned with [`bootstrap.sh`](#provisioning-a-fresh-instance), nginx serves that port and the container binds loopback only; without it, the container publishes port 80 directly, exactly as this tool has always done.
 
 ---
 
@@ -8,9 +10,9 @@ A single Docker-based workflow for running an app on a Jetstream2 instance, gene
 
 - Jetstream2 instance running **Ubuntu 22.04 (jammy) or 24.04 (noble)**, launched via Exosphere. Both are tested; the GUI targets Python 3.10 syntax so it runs on either (24.04 ships 3.12).
 - A fixed/floating IP assigned to the instance.
-- Security group allowing inbound **80/tcp** and **22/tcp**.
+- Security group allowing inbound **80/tcp** and **22/tcp** — plus **443/tcp** if you plan to use TLS.
 - SSH access as a sudo-capable user (Jetstream2's default `exouser`).
-- Docker preinstalled (Jetstream2's standard Ubuntu image ships with it) — no install step needed. No `sudo`/root needed for anything in this workflow, assuming `exouser` is in the `docker` group, which is Jetstream2's default.
+- Docker preinstalled (Jetstream2's standard Ubuntu image ships with it); `bootstrap.sh` installs it if not. Deploying an app needs no `sudo`, assuming `exouser` is in the `docker` group, which is Jetstream2's default — only host provisioning does.
 
 ---
 
@@ -21,6 +23,101 @@ A single Docker-based workflow for running an app on a Jetstream2 instance, gene
 **The command line** — everything the application does, it does by running `build_and_run.sh`. If you're comfortable in a shell, use it directly; the two are interchangeable and nothing is hidden from you.
 
 Either way, your project and data have to reach the instance first: see [getting your files onto the instance](getting-your-files-onto-the-instance.md).
+
+---
+
+## Provisioning a fresh instance
+
+`bootstrap.sh` sets up the **host**; `build_and_run.sh` deploys the **app**. Neither replaces the other — you run bootstrap once per instance, and `build_and_run.sh` every time your code changes.
+
+```bash
+git clone https://github.com/stephenconklin/Jetstream2_Dashboard_Deploy.git
+cd Jetstream2_Dashboard_Deploy
+
+cp deploy/deploy.env.example deploy/deploy.env   # optional — defaults work as-is
+${EDITOR:-nano} deploy/deploy.env
+
+sudo ./deploy/bootstrap.sh                       # provision the host
+sudo ./deploy/bootstrap.sh /path/to/my/project   # ...and deploy in one go
+```
+
+It installs Docker (if missing), a swapfile, nginx, TLS if you have a DNS name, and the autoheal sidecar — then writes `/etc/dashboard-deploy/proxy.env`, which is what tells `build_and_run.sh` to publish behind the proxy.
+
+The script is **idempotent**: re-running it is the normal way to apply a change from `deploy/deploy.env`. Every step detects existing state and skips.
+
+| Command | Effect |
+|---|---|
+| `sudo ./deploy/bootstrap.sh` | Full provision. Safe to re-run. |
+| `sudo ./deploy/bootstrap.sh <project>` | Provision, then build and deploy that project |
+| `sudo ./deploy/bootstrap.sh --check` | Read-only status snapshot; changes nothing |
+| `sudo ./deploy/bootstrap.sh --remove-proxy` | Roll back to publishing the container directly on port 80 |
+
+**It does not provision your data.** Research datasets belong on an attached Jetstream2 volume, not in a git clone or a Docker image. Attach and mount the volume first — see [getting your files onto the instance](getting-your-files-onto-the-instance.md) and [Reboot persistence](#reboot-persistence).
+
+### Running it on an instance that already serves a dashboard
+
+nginx needs port 80, and an existing deployment is holding it. Bootstrap detects this, asks before removing that container, and — if you passed a project directory — re-publishes it behind the proxy at the end. Expect **a couple of minutes of downtime** across the cutover. The image is kept, so re-publishing is a restart rather than a rebuild.
+
+If you'd rather not be asked (an unattended run), pass `--yes`.
+
+### Rolling back
+
+```bash
+sudo ./deploy/bootstrap.sh --remove-proxy
+./deploy/build_and_run.sh /path/to/my/project   # re-publish onto port 80
+```
+
+Removing the proxy deletes the state file and stops nginx, but nothing rebinds a *running* container in place — the re-publish is what moves it back onto port 80.
+
+---
+
+## The nginx front end
+
+Once bootstrap has run, the app container binds **127.0.0.1 only** and nginx is the sole public listener:
+
+```
+internet ──→ nginx (host, :80 / :443, TLS, rate limiting, gzip, maintenance page)
+           → 127.0.0.1:8080 → dashboard container (Shiny Server / gunicorn / streamlit / shiny run)
+                               ├─ health check → autoheal sidecar
+                               └─ data bind-mounted read-write from DATA_DIR
+```
+
+Verify the app is not publicly exposed after any change:
+
+```bash
+sudo ss -tlnp | grep -E ':80|:8080'
+# expect nginx on 0.0.0.0:80 and docker-proxy on 127.0.0.1:8080 ONLY.
+# Anything on 0.0.0.0:8080 means the app server is facing the internet directly.
+```
+
+**Why bother**, when the container could just publish port 80 itself:
+
+- Every one of these frameworks serves from a small fixed pool of workers or threads, so a single slow client can hold one for an entire conversation. nginx buffers each complete request before contacting the app, so a slow client costs an nginx connection instead of an app worker.
+- It is where TLS, rate limiting, gzip, upload limits and a real maintenance page can live without any of it becoming the app's problem.
+
+**Two settings are load-bearing and should not be "tidied up"** (both are explained at length in `deploy/nginx/dashboard.conf.template`):
+
+- WebSockets. R Shiny, Python Shiny and Streamlit are useless without them, so `Connection` is set from a `map` rather than hardcoded, and `proxy_read_timeout` is long — a Shiny socket sits idle whenever nobody is clicking, and a short timeout tears it down mid-session as a "Disconnected from server" with nothing in the app's own log to explain it.
+- `proxy_buffering off`. These frameworks stream responses; buffering them makes the UI appear to freeze until the transfer finishes. Request buffering stays *on*, which is the half that protects the app from slow clients.
+
+Tune the rest — upload size, rate limit, connection cap, timeout — in `deploy/deploy.env` and re-run bootstrap. Edit the template, never `/etc/nginx/sites-available/dashboard`; the next bootstrap run overwrites the installed copy.
+
+### The `/_deploy/` prefix is reserved
+
+`/_deploy/health` (nginx's own liveness, answered without touching the app) and `/_deploy/unavailable.html` (the maintenance page) are served by nginx and never proxied. An app that wants to serve its own content at those paths cannot.
+
+### TLS
+
+Let's Encrypt **cannot issue a certificate for a bare IP address**, so TLS needs a DNS name pointed at the instance's floating IP:
+
+```ini
+SERVER_NAME="dashboard.example.org"
+CERTBOT_EMAIL="you@example.org"
+```
+
+With `SERVER_NAME` empty — the default, and the usual Jetstream2 case — bootstrap warns and serves plain HTTP; everything else works. Add the name later and re-run bootstrap; nothing else needs changing.
+
+Because bootstrap re-renders the site config from the template on every run, it also **re-installs an existing certificate** into the fresh config rather than skipping it. Without that, a second bootstrap run would silently drop the instance back to plain HTTP while reporting success.
 
 ---
 
@@ -128,9 +225,46 @@ This tool is scoped to one app at a time per instance (see "Assumes one instance
 **To update data when using `DATA_DIR`:** just update the files at that host path and `docker restart <container-name>` — no rebuild needed, since the data is bind-mounted rather than baked in.
 
 **Known limitations:**
-- No TLS, since there's no domain to challenge against yet — see "Open items" below.
+- TLS requires a DNS name — Let's Encrypt cannot issue for a bare IP. See [TLS](#tls).
 - R dependency auto-detection is static analysis — it won't catch packages loaded dynamically (e.g. via a variable passed to `library()`), so an unusual project may occasionally need an explicit `renv.lock` instead of relying on the scan.
 - Framework detection is a regex/content-based heuristic, not a real dependency or AST analysis — it can occasionally get an unusual project wrong or find a genuine ambiguity, which is exactly what the `FRAMEWORK=` override exists for.
+
+---
+
+## Health and diagnosis
+
+`manage.sh status` answers *is it up?*. `manage.sh health` answers *which layer is broken?* — a question that only appears once nginx is involved, because from a browser an app failure and a proxy failure look identical and need completely different fixes.
+
+```bash
+./deploy/manage.sh health              # for people
+./deploy/manage.sh health --porcelain  # stable key=value, for the GUI
+```
+
+Everything is probed live. There is no sampler daemon and no log to go stale — the trade is that this tells you about the problem happening *now*, not one that has already passed. `docker logs` remains the record of what happened earlier.
+
+The verdict is one of:
+
+| Verdict | Meaning |
+|---|---|
+| `ok` | Reachable and answering |
+| `not-deployed` | No container exists yet |
+| `stopped` | The container exists but isn't running |
+| `app-not-responding` | Container running, app inside it silent — check `manage.sh logs` |
+| `proxy-down` | The app is fine; nginx isn't serving |
+| `proxy-cannot-reach-app` | Both are up but nginx can't reach the app — check `/var/log/nginx/dashboard.error.log` |
+| `unhealthy` | The app answers, but its Docker health check is failing |
+
+> **`ok` means reachable, not correct.** Shiny and Streamlit catch script-level exceptions and render them *as a page*, answering 200 the whole time. Nothing short of opening the dashboard in a browser tells you it actually works. The same caveat applies to the post-deploy smoke test.
+
+### Container health checks and autoheal
+
+Every container `build_and_run.sh` starts gets a Docker health check — an HTTP GET of `/` on the framework's own port, supplied at run time rather than baked into the Dockerfiles (the port is only known at deploy time, and three of the four base images ship neither `curl` nor `wget`).
+
+It is a **liveness** check for the same reason as above, and it deliberately treats any status below 500 as alive: an app serving its real UI from a sub-path is unusual but legitimate, and restarting it forever over a 404 would be worse than not checking.
+
+`--restart unless-stopped` only reacts to the app process *exiting*. The failure worth catching is the one where it doesn't — alive, but no longer serving. Docker does not act on health status by itself, so bootstrap starts an **autoheal** sidecar that watches for `health=unhealthy` on containers labelled `autoheal=true` and restarts them, turning an outage that lasts until a human notices into one that lasts a few minutes. Disable it with `ENABLE_AUTOHEAL="no"`.
+
+The health check's start period is 180s, charged against the slowest realistic case — a geospatial R Shiny app reading a large raster at startup. A shorter window would have autoheal restart it into a loop it could never escape.
 
 ---
 
@@ -345,5 +479,4 @@ This is a lint, not a test: it catches quoting/expansion defects, not whether an
 
 ## Open items / possible future work
 
-- TLS once a domain is available (Nginx sidecar or Caddy in front of the container).
 - A curated list of known-good `BASE_IMAGE` overrides per framework for common heavier dependencies (e.g. a GDAL-ready Python image for geospatial Dash/Streamlit apps, analogous to `rocker/geospatial` for R).

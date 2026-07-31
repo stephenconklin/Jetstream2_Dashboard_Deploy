@@ -10,6 +10,8 @@ than naming mechanisms.
 
 from __future__ import annotations
 
+import queue
+import threading
 import tkinter as tk
 from dataclasses import dataclass, field
 from tkinter import filedialog, messagebox, ttk
@@ -756,7 +758,7 @@ class ManageTab(ttk.Frame):
         self.shared = shared
         self.deploy_tab = deploy_tab
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=1)
+        self.rowconfigure(3, weight=1)
 
         self.status = tk.StringVar(value="Checking…")
         ttk.Label(self, textvariable=self.status, wraplength=680,
@@ -772,11 +774,26 @@ class ManageTab(ttk.Frame):
         ttk.Button(row, text="Stop", command=lambda: self._do("stop")).grid(row=0, column=3, padx=PAD)
         ttk.Button(row, text="Publish again", command=self._redeploy).grid(row=0, column=4)
 
+        # The detail behind the headline. Collapsed into a plain grid of
+        # label/value pairs rather than a table widget: there are only a
+        # handful of facts, and they are the ones to read out over email when
+        # asking for help.
+        detail_box = ttk.LabelFrame(self, text="Details", padding=PAD)
+        detail_box.grid(row=2, column=0, sticky="ew", pady=(PAD, 0))
+        detail_box.columnconfigure(1, weight=1)
+        self._detail_vars: dict[str, tk.StringVar] = {}
+        for i, (key, caption) in enumerate(self.DETAIL_ROWS):
+            ttk.Label(detail_box, text=caption).grid(row=i, column=0, sticky="w", padx=(0, PAD))
+            var = tk.StringVar(value="—")
+            self._detail_vars[key] = var
+            ttk.Label(detail_box, textvariable=var, font=("TkFixedFont", 9)).grid(
+                row=i, column=1, sticky="w")
+
         log_box = ttk.LabelFrame(self, text="Recent output from your app", padding=PAD)
-        log_box.grid(row=2, column=0, sticky="nsew", pady=(PAD, 0))
+        log_box.grid(row=3, column=0, sticky="nsew", pady=(PAD, 0))
         log_box.columnconfigure(0, weight=1)
         log_box.rowconfigure(0, weight=1)
-        self.logs = tk.Text(log_box, height=14, wrap="none", state="disabled",
+        self.logs = tk.Text(log_box, height=12, wrap="none", state="disabled",
                             font=("TkFixedFont", 9))
         self.logs.grid(row=0, column=0, sticky="nsew")
         bar = ttk.Scrollbar(log_box, orient="vertical", command=self.logs.yview)
@@ -786,9 +803,103 @@ class ManageTab(ttk.Frame):
             row=1, column=0, sticky="w", pady=(PAD, 0))
 
         self.url = ""
+        self._health_queue: queue.Queue[dict[str, str]] = queue.Queue()
+        self._health_pending = False
         self.refresh()
 
+    # Porcelain key -> caption. Ordered as someone would read down them when
+    # working out what is wrong: what is running, then how it is served, then
+    # what it is consuming.
+    DETAIL_ROWS = (
+        ("state", "Container"),
+        ("docker_health", "Health check"),
+        ("restarts", "Restarts"),
+        ("serving", "Served by"),
+        ("probes", "Responding"),
+        ("autoheal", "Auto-restart"),
+        ("mem_usage", "Memory"),
+        ("root_disk", "Disk"),
+    )
+
     def refresh(self) -> None:
+        """Kick off a health check on a worker thread.
+
+        Not run inline: ``manage.sh health`` makes several HTTP probes and
+        samples ``docker stats``, and each probe waits out its own timeout
+        when something is wedged — which is exactly when a researcher presses
+        Refresh. Inline, that would freeze the window for the better part of a
+        minute and look like the GUI itself had hung.
+        """
+        if self._health_pending:
+            return
+        self._health_pending = True
+        self.status.set("Checking…")
+
+        def work() -> None:
+            try:
+                result = backend.health()
+            except Exception as exc:      # never let a worker thread die silently
+                result = {"verdict": "", "detail": str(exc)}
+            self._health_queue.put(result)
+
+        threading.Thread(target=work, daemon=True).start()
+        self.after(150, self._drain_health)
+
+    def _drain_health(self) -> None:
+        """Apply a finished health check. UI thread only — see runner.py."""
+        try:
+            health = self._health_queue.get_nowait()
+        except queue.Empty:
+            self.after(150, self._drain_health)
+            return
+
+        self._health_pending = False
+        if not health:
+            # manage.sh unavailable or it failed outright. Fall back to the
+            # simpler status call rather than showing nothing.
+            self._apply_status_fallback()
+            return
+
+        verdict = health.get("verdict", "")
+        detail = health.get("detail", "")
+        self.url = health.get("url", "") if verdict in ("ok", "unhealthy") else ""
+
+        headline = backend.HEALTH_HEADLINES.get(verdict, "")
+        if verdict == "ok":
+            self.status.set(f"{headline} Your dashboard is at\n{self.url}")
+        elif verdict == "not-deployed":
+            self.status.set("Nothing is published yet. Use steps 1–3 to publish "
+                            "your dashboard.")
+        elif verdict == "stopped":
+            self.status.set("Your dashboard is stopped. It will stay stopped, "
+                            "including after a reboot, until you publish again.")
+        elif headline:
+            self.status.set(f"{headline}\n{detail}")
+        else:
+            self.status.set(detail or "Could not work out the current state.")
+
+        proxied = health.get("proxy_enabled") == "1"
+        serving = (f"nginx on port 80 → app on {health.get('app_bind', '?')}"
+                   if proxied else
+                   f"app directly on {health.get('app_bind', '?')} (no web server in front)")
+        # HTTP codes as-is: they are the single most useful thing to quote
+        # when asking for help, and 000 (nothing answered at all) is a
+        # meaningfully different symptom from 502.
+        probes = f"app {health.get('app_http', '?')}"
+        if proxied:
+            probes += (f" · nginx {health.get('nginx_http', '?')}"
+                       f" · public {health.get('public_http', '?')}")
+
+        values = dict(health)
+        values["serving"] = serving
+        values["probes"] = probes
+        for key, var in self._detail_vars.items():
+            var.set(values.get(key) or "—")
+
+        self.open_btn.configure(state="normal" if self.url else "disabled")
+
+    def _apply_status_fallback(self) -> None:
+        """The pre-health display, for when manage.sh health isn't usable."""
         st = backend.container_status()
         state, health = st.get("state", "absent"), st.get("health", "unknown")
         self.url = st.get("url", "")

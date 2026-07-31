@@ -15,6 +15,13 @@
 #     like a hang, for no reason.
 #   * A desktop icon that actually launches, which on GNOME needs both the
 #     executable bit and a "trusted" flag.
+#
+# The host itself — Docker, nginx, swap, TLS, autoheal — is NOT set up here.
+# That is bootstrap.sh's job, and this script calls it rather than carrying a
+# second copy of the package lists and the Docker apt repository setup, which
+# would then drift. The split is: bootstrap.sh provisions any instance; this
+# adds the researcher desktop on top. Set SKIP_BOOTSTRAP=1 to prepare only the
+# desktop side on a host that is already provisioned.
 set -euo pipefail
 
 if [[ "$(id -u)" -ne 0 ]]; then
@@ -77,6 +84,24 @@ else
 fi
 chown -R "$TARGET_USER":"$TARGET_USER" "$REPO_DIR"
 
+# ------------------------------------------------------------------- host
+# Docker, swap, nginx, the proxy state file, TLS and autoheal. Done here, from
+# the clone that was just made, so the image ships ready to serve rather than
+# needing a second manual step after boot.
+#
+# SUDO_USER is passed through explicitly: bootstrap.sh uses it to decide who
+# should own what it creates, and this script may itself have been invoked in
+# a context where it differs from TARGET_USER.
+echo
+echo "== Host provisioning (deploy/bootstrap.sh) =="
+if [[ "${SKIP_BOOTSTRAP:-0}" == "1" ]]; then
+  echo "SKIP_BOOTSTRAP=1 — skipping. Run 'sudo $REPO_DIR/deploy/bootstrap.sh' separately."
+else
+  # --yes: there is no dashboard on a fresh image for the port-80 prompt to
+  # be about, and an image build should never stop to ask.
+  SUDO_USER="$TARGET_USER" "$REPO_DIR/deploy/bootstrap.sh" --yes
+fi
+
 # pkexec running a file inside a user-writable clone is not a privilege
 # boundary here (the user already has sudo), but a root-owned copy is
 # tidier and is what backend.py prefers.
@@ -137,10 +162,16 @@ echo "  launches: $REPO_DIR/deploy/gui/launch_gui.sh"
 # ------------------------------------------------------------ base images
 echo
 echo "== Pre-pulling base images (several GB; this is the slow part) =="
-for image in python:3.11-slim rocker/r-ver:4.4.1 rocker/geospatial:4.4.1; do
+# Pulled as root, not as TARGET_USER. The Docker daemon has a single image
+# store shared by everyone who can talk to it, so this warms the cache for the
+# researcher just the same — and bootstrap.sh may have only just added
+# TARGET_USER to the docker group, which does not take effect until their next
+# login. Pulling as them would fail on the socket for every image.
+for image in python:3.11-slim rocker/r-ver:4.4.1 rocker/geospatial:4.4.1 \
+             willfarrell/autoheal:latest; do
   echo "  $image"
-  sudo -u "$TARGET_USER" docker pull -q "$image" || \
-    echo "  (failed — a researcher's first publish will pull it instead)"
+  docker pull -q "$image" >/dev/null || \
+    echo "  (failed — it will be pulled on first use instead)"
 done
 
 # ------------------------------------------------------------------- motd
@@ -168,5 +199,9 @@ echo "Done. Before creating the image from this instance:"
 echo "  1. Open the desktop icon once and confirm the window appears."
 echo "  2. Publish a bundled example to warm Docker's cache:"
 echo "       cd $REPO_DIR && ./deploy/build_and_run.sh examples/streamlit-hello-world"
-echo "  3. Remove that test container:  docker rm -f dashboard-app"
-echo "  4. Clear shell history if you'd rather it not ship with the image."
+echo "  3. Confirm it is reachable THROUGH nginx, not just running:"
+echo "       $REPO_DIR/deploy/manage.sh health     # expect verdict: ok"
+echo "       sudo ss -tlnp | grep -E ':80|:8080'   # nginx on 0.0.0.0:80,"
+echo "                                             # docker-proxy on 127.0.0.1:8080 only"
+echo "  4. Remove that test container:  docker rm -f dashboard-app"
+echo "  5. Clear shell history if you'd rather it not ship with the image."

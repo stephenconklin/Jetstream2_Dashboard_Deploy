@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
-# Build and run a dashboard/app in Docker, bound to host port 80, on a
-# Jetstream2 instance. Generic across R Shiny, Plotly Dash, Python Shiny,
-# and Streamlit — auto-detects which one a dropped-in project is. See
-# examples/ for a self-test fixture per framework.
+# Build and run a dashboard/app in Docker on a Jetstream2 instance. Generic
+# across R Shiny, Plotly Dash, Python Shiny, and Streamlit — auto-detects
+# which one a dropped-in project is. See examples/ for a self-test fixture
+# per framework.
+#
+# Where it publishes depends on whether deploy/bootstrap.sh has provisioned
+# an nginx reverse proxy on this host:
+#   * proxy present — the container binds 127.0.0.1 only, and nginx serves
+#     port 80 in front of it (TLS, rate limiting, gzip, a maintenance page).
+#   * no proxy      — the container binds 0.0.0.0:80 directly, as it always
+#     did. Nothing here requires bootstrap.sh to have been run.
+# See deploy/lib/proxy.sh for how that is decided.
 #
 # Usage:
 #   ./build_and_run.sh                        # deploys ./app (drop your project there)
@@ -50,7 +58,8 @@
 #                container, when a project's server is configured for
 #                something other than its framework's default (3838 R Shiny,
 #                8050 Dash, 8000 Python Shiny, 8501 Streamlit). The host
-#                side is always port 80 regardless.
+#                side is unaffected — it stays whatever the proxy state says
+#                (port 80 directly, or a loopback port behind nginx).
 #   DATA_DIR   - host path (e.g. a mounted Jetstream2 storage volume, typically
 #                under /media/volume/<volume-name>/...) bind-mounted into the
 #                container AND passed as a DATA_DIR container env var. Data is
@@ -118,6 +127,12 @@ ENTRY_FILE=""
 ENTRY_POINT_DESC=""
 
 detect_framework   # sets FRAMEWORK, ENTRY_POINT_DESC, ENTRY_FILE (Python only)
+
+# Reading the proxy state file is a read, so this belongs above the dry-run
+# gate — and it has to be, since --dry-run reports where the app would be
+# published. Sets PROXY_ENABLED, APP_BIND_ADDR, APP_HOST_PORT,
+# PROXY_SERVER_NAME; absent state file means the pre-nginx 0.0.0.0:80.
+resolve_app_bind
 
 # Everything from here to the --dry-run gate below must stay side-effect
 # free: --dry-run's whole purpose is triaging candidate projects, so it must

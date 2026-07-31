@@ -7,6 +7,12 @@
 # IMAGE_NAME, BASE_IMAGE, DATA_DIR, etc.) rather than taking everything as
 # positional args, matching the rest of this script's style.
 
+# Where the container binds (0.0.0.0:80 directly, or loopback behind nginx)
+# and how to health-check it. Sourced here rather than by each caller so
+# build_and_run.sh and manage.sh cannot drift on the answer.
+# shellcheck source-path=SCRIPTDIR
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/proxy.sh"
+
 # Temp build context created by build_image(), tracked globally so it gets
 # cleaned up however the script ends. A RETURN trap (the previous approach)
 # doesn't fire on `exit`, so every failure path — a failed docker build, a
@@ -95,6 +101,9 @@ print_dry_run_summary() {
     && echo "present (DATA_DIR would be required, prompted for if unset)" \
     || echo "not in the project (set DATA_DIR=/path to mount data from elsewhere)")"
   echo "apt.txt:         $([[ "$has_apt_txt" -eq 1 ]] && echo present || echo "absent/empty")"
+  echo "Serving:         $([[ "$PROXY_ENABLED" -eq 1 ]] \
+    && echo "nginx on port 80 -> app on $APP_BIND_ADDR:$APP_HOST_PORT" \
+    || echo "app published directly on port 80 (no proxy; run bootstrap.sh to add one)")"
   echo "==========================================="
 }
 
@@ -129,6 +138,10 @@ print_dry_run_porcelain() {
   echo "has_apt_txt=$has_apt_txt"
   echo "container_port=$(container_port_for_framework "$FRAMEWORK")"
   echo "data_mount_target=$(container_data_mount_target_for_framework "$FRAMEWORK")"
+  echo "proxy_enabled=$PROXY_ENABLED"
+  echo "app_bind_addr=$APP_BIND_ADDR"
+  echo "app_host_port=$APP_HOST_PORT"
+  echo "server_name=$PROXY_SERVER_NAME"
 }
 
 # Data is never baked into the image. If the project ships a data/ directory
@@ -456,29 +469,46 @@ summarize_build_failure() {
 
 # `docker rm -f` + `docker run -d`, parameterized by internal port and data
 # mount target instead of hardcoding R Shiny's 3838/srv-shiny-server path.
-# Reads from the caller: CONTAINER_NAME, IMAGE_NAME, INTERNAL_PORT,
-# DATA_DIR, MOUNT_TARGET.
+# Reads from the caller: CONTAINER_NAME, IMAGE_NAME, INTERNAL_PORT, FRAMEWORK,
+# DATA_DIR, MOUNT_TARGET, and (via resolve_app_bind) APP_BIND_ADDR /
+# APP_HOST_PORT.
 #
 # Removes by name (in case a stale container with this name exists but isn't
-# running) AND by whatever currently holds host port 80 — since every
-# container binds port 80 unconditionally (one instance = one app), a prior
+# running) AND by whatever currently holds the host port — since every
+# container binds one unconditionally (one instance = one app), a prior
 # deploy under a *different* name would otherwise be left running and cause
 # "port is already allocated" instead of being cleanly replaced.
 run_container() {
   docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
-  local port80_containers port80_names
-  port80_containers="$(docker ps -aq --filter "publish=80")"
-  if [[ -n "$port80_containers" ]]; then
+  # Both ports, not just the configured one. Adopting nginx moves the app
+  # from 80 to a loopback port, and the container from the previous, direct
+  # deploy is still sitting on 80 — where it would block nginx from binding
+  # and leave the instance serving the old app forever.
+  # `sort -u` because 80 and APP_HOST_PORT can name the same container (a
+  # legacy deploy made before any proxy was configured), and `docker rm` on a
+  # repeated ID reports an error for the second one.
+  local claimed_ids claimed_names port
+  claimed_ids=""
+  claimed_names=""
+  for port in 80 "$APP_HOST_PORT"; do
+    claimed_ids+="$(docker ps -aq --filter "publish=$port")"$'\n'
+    claimed_names+="$(docker ps -a --filter "publish=$port" --format '{{.Names}}')"$'\n'
+  done
+  # `grep -v '^$'` first: the appends above leave a blank line per port with
+  # nothing on it, and sort would otherwise pass those through as empty
+  # arguments to `docker rm`.
+  claimed_ids="$(printf '%s' "$claimed_ids" | grep -v '^[[:space:]]*$' | sort -u | tr '\n' ' ')" || true
+  claimed_names="$(printf '%s' "$claimed_names" | grep -v '^[[:space:]]*$' | sort -u | tr '\n' ' ')" || true
+  if [[ -n "${claimed_ids// /}" ]]; then
     # Names, not the 64-char IDs used for the removal itself — the point of
     # the message is to tell you which app is being replaced.
-    port80_names="$(docker ps -a --filter "publish=80" --format '{{.Names}}' | tr '\n' ' ')"
-    echo "Replacing container(s) already bound to host port 80: ${port80_names% }"
-    # Deliberately unquoted: docker ps -q returns one ID per line and each
-    # must become a separate argument. IDs are hex, so there's nothing for
+    echo "Replacing container(s) already bound to the host port: ${claimed_names% }"
+    # Deliberately unquoted: this is a space-separated list and each ID must
+    # become a separate argument. IDs are hex, so there's nothing for
     # globbing to expand.
     # shellcheck disable=SC2086
-    docker rm -f $port80_containers >/dev/null
+    docker rm -f $claimed_ids >/dev/null
   fi
 
   local data_mount_args=()
@@ -492,6 +522,32 @@ run_container() {
   local run_platform_args=()
   [[ -n "${BUILD_PLATFORM:-}" ]] && run_platform_args=(--platform "$BUILD_PLATFORM")
 
+  # A container health check, supplied at run time rather than baked into
+  # each Dockerfile — see app_health_cmd() in proxy.sh for why. It buys two
+  # things: `manage.sh health` can distinguish "running" from "actually
+  # serving", and the autoheal sidecar (started by bootstrap.sh) can restart
+  # a container that is alive but wedged. `--restart unless-stopped` cannot
+  # do that on its own: it only reacts to the process *exiting*, and the
+  # failure mode worth catching here is the one where it doesn't.
+  #
+  # start-period is generous because it is charged against the slowest case,
+  # not the typical one — a geospatial R Shiny app reading a large raster at
+  # startup legitimately takes minutes, and a shorter window would mark it
+  # unhealthy and have autoheal restart it into a loop it can never escape.
+  local health_args=()
+  local health_cmd
+  if health_cmd="$(app_health_cmd "$FRAMEWORK" "$INTERNAL_PORT")"; then
+    health_args=(
+      --health-cmd "$health_cmd"
+      --health-interval 30s
+      --health-timeout 15s
+      --health-retries 3
+      --health-start-period 180s
+      # What autoheal matches on. Harmless when no sidecar is running.
+      --label autoheal=true
+    )
+  fi
+
   # >/dev/null: `docker run -d` echoes the 64-char container ID, which is
   # noise for the audience this tool is for — the useful confirmation is the
   # summary run_smoke_test() prints once the app actually responds.
@@ -499,7 +555,8 @@ run_container() {
     "${run_platform_args[@]+"${run_platform_args[@]}"}" \
     --name "$CONTAINER_NAME" \
     --restart unless-stopped \
-    -p 80:"$INTERNAL_PORT" \
+    -p "$APP_BIND_ADDR:$APP_HOST_PORT:$INTERNAL_PORT" \
+    "${health_args[@]+"${health_args[@]}"}" \
     "${data_mount_args[@]+"${data_mount_args[@]}"}" \
     "$IMAGE_NAME:latest" >/dev/null
 }
@@ -523,6 +580,26 @@ public_ip() {
   fi
 }
 
+# The address to hand someone. Prefers the configured DNS name over the IP:
+# with nginx in front, SERVER_NAME is what any TLS certificate was issued for,
+# so the https:// URL only works under that name. Falls back to the public IP
+# when no name is configured, which is the ordinary Jetstream2 case.
+#
+# Reads PROXY_ENABLED / PROXY_SERVER_NAME from resolve_app_bind(). Callers
+# that haven't run it still get a sensible answer via the ${x:-} defaults —
+# manage.sh and build_and_run.sh both do run it.
+public_url() {
+  if [[ "${PROXY_ENABLED:-0}" -eq 1 && -n "${PROXY_SERVER_NAME:-}" ]]; then
+    # https only if a certificate is actually installed for that name;
+    # bootstrap.sh records the scheme it ended up with.
+    local scheme
+    scheme="$(_proxy_env_get PUBLIC_SCHEME)"
+    echo "${scheme:-http}://${PROXY_SERVER_NAME}/"
+  else
+    echo "http://$(public_ip)/"
+  fi
+}
+
 # A clean `docker build` + `docker run -d` only proves the image is valid
 # and the container started — not that the app process inside stayed up
 # (e.g. a missing dependency or a bad entry point can kill it seconds
@@ -538,7 +615,9 @@ public_ip() {
 #
 # Reads CONTAINER_NAME from the caller.
 run_smoke_test() {
-  echo "Waiting for the app to respond on port 80..."
+  local app_url
+  app_url="$(app_direct_url)"
+  echo "Waiting for the app to respond on ${app_url}..."
   if command -v curl >/dev/null 2>&1; then
     local smoke_test_ok=0
     # `_`: the counter is only there to bound the loop at 30 tries (~60s).
@@ -547,20 +626,41 @@ run_smoke_test() {
       # on every poll while the app is still starting — up to 30 alarming
       # error lines during an ordinary, successful startup. A genuine
       # failure is reported by the branch below, with the container's logs.
-      if curl -fsS -o /dev/null "http://localhost:80/" 2>/dev/null; then
+      if curl -fsS -o /dev/null "$app_url" 2>/dev/null; then
         smoke_test_ok=1
         break
       fi
       sleep 2
     done
     if [[ "$smoke_test_ok" -eq 1 ]]; then
+      # The app is up. When nginx is in front, that is not yet the whole
+      # story — the public URL goes through the proxy, and a proxy that is
+      # stopped or misconfigured means visitors still see nothing. Check it
+      # separately so the two failures can be told apart, and warn rather
+      # than fail: the deployment itself did succeed.
+      if [[ "$PROXY_ENABLED" -eq 1 ]]; then
+        if ! curl -fsS -o /dev/null --max-time 10 "$(public_local_url)" 2>/dev/null; then
+          echo >&2
+          echo "Warning: the app is answering on $app_url, but the nginx proxy in front" >&2
+          echo "of it is not serving it on port 80 — so it isn't reachable from a browser." >&2
+          echo "Check the proxy with:" >&2
+          echo "  sudo nginx -t && sudo systemctl status nginx" >&2
+          echo "  sudo tail -20 /var/log/nginx/dashboard.error.log" >&2
+          echo "  sudo ./deploy/bootstrap.sh --check" >&2
+          echo >&2
+        fi
+      fi
       # The commands are spelled out rather than left to the docs: this tool
       # is aimed at researchers who may not use Docker day to day, and this
       # is the moment they need them.
       echo
       echo "  Deployed. '$CONTAINER_NAME' is running and responding."
       echo
-      echo "    URL       http://$(public_ip)/"
+      echo "    URL       $(public_url)"
+      if [[ "$PROXY_ENABLED" -eq 1 ]]; then
+        echo "    Serving   nginx on port 80  ->  app on $APP_BIND_ADDR:$APP_HOST_PORT"
+      fi
+      echo "    Health    ./deploy/manage.sh health"
       echo "    Logs      docker logs -f $CONTAINER_NAME"
       echo "    Restart   docker restart $CONTAINER_NAME"
       echo "    Stop      docker stop $CONTAINER_NAME"
@@ -569,8 +669,8 @@ run_smoke_test() {
       echo "  the running container for you."
       echo
     else
-      echo "Warning: container '$CONTAINER_NAME' started, but never responded on port 80" >&2
-      echo "within 60s. The app process died at startup rather than serving. The image" >&2
+      echo "Warning: container '$CONTAINER_NAME' started, but never responded on" >&2
+      echo "$app_url within 60s. The app process died at startup rather than serving. The image" >&2
       echo "built fine, so this is a runtime failure — most often one of:" >&2
       echo "  * the data folder doesn't hold the files the app expects (check the logs" >&2
       echo "    below for a missing file; the folder you chose is mounted OVER the app's" >&2
@@ -589,6 +689,7 @@ run_smoke_test() {
   else
     # public_ip() itself needs curl, so there's no point calling it here.
     echo "curl not found — skipping post-start smoke test." >&2
-    echo "Container '$CONTAINER_NAME' started; verify manually at http://<instance-fixed-ip>/."
+    echo "Container '$CONTAINER_NAME' started; verify manually at http://<instance-fixed-ip>/"
+    echo "(the app itself is published on $APP_BIND_ADDR:$APP_HOST_PORT)."
   fi
 }

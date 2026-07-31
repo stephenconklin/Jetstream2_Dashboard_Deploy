@@ -2,6 +2,7 @@
 # Look after an already-deployed dashboard: status, logs, restart, stop.
 #
 #   ./deploy/manage.sh status [--porcelain]
+#   ./deploy/manage.sh health [--porcelain]
 #   ./deploy/manage.sh url
 #   ./deploy/manage.sh logs [N]
 #   ./deploy/manage.sh restart
@@ -23,22 +24,34 @@ source "$TOOLING_DIR/lib/common.sh"
 
 CONTAINER_NAME="${CONTAINER_NAME:-dashboard-app}"
 
+# Sets PROXY_ENABLED / APP_BIND_ADDR / APP_HOST_PORT / PROXY_SERVER_NAME, so
+# every probe below aims at the port this deployment actually uses instead of
+# assuming 80.
+resolve_app_bind
+
 usage() {
-  echo "usage: manage.sh {status [--porcelain]|url|logs [N]|restart|stop}" >&2
+  echo "usage: manage.sh {status [--porcelain]|health [--porcelain]|url|logs [N]|restart|stop}" >&2
   exit 2
 }
 
-# Present but not necessarily running; "" when no such container exists.
+# Present but not necessarily running; "" when no such container exists (and
+# also when the Docker daemon isn't reachable — see docker_field below, which
+# is what keeps those two from returning subtly different empty values).
 container_state() {
-  docker inspect -f '{{.State.Status}}' "$CONTAINER_NAME" 2>/dev/null || true
+  docker_field "" -f '{{.State.Status}}' "$CONTAINER_NAME"
 }
 
 # Whether the app answers HTTP, as opposed to merely having a running
 # container. Same distinction run_smoke_test() draws: this is liveness, not
 # correctness — a framework that renders its own error page still answers.
+#
+# Probes the app directly rather than through nginx, deliberately: this
+# question is about the app, and routing it through the proxy would report a
+# healthy app as broken whenever nginx is the thing that's down. The proxy
+# gets its own probe in cmd_health().
 container_responding() {
   command -v curl >/dev/null 2>&1 || return 1
-  curl -fsS -o /dev/null --max-time 5 "http://localhost:80/" 2>/dev/null
+  curl -fsS -o /dev/null --max-time 5 "$(app_direct_url)" 2>/dev/null
 }
 
 cmd_status() {
@@ -70,7 +83,7 @@ cmd_status() {
 
   created="$(docker inspect -f '{{.Created}}' "$CONTAINER_NAME" 2>/dev/null || true)"
   url=""
-  [[ "$health" == "responding" ]] && url="http://$(public_ip)/"
+  [[ "$health" == "responding" ]] && url="$(public_url)"
 
   if [[ "$porcelain" -eq 1 ]]; then
     echo "container=$CONTAINER_NAME"
@@ -86,12 +99,196 @@ cmd_status() {
   fi
 }
 
+# ---------------------------------------------------------------------------
+# health
+#
+# `status` answers "is it up?". This answers "which layer is broken?", which
+# is a different question the moment nginx sits in front: a browser showing
+# nothing looks identical whether the proxy is down, the container is down, or
+# the app inside it is wedged, and each needs a different fix.
+#
+# Everything is probed live rather than read from a log. There is no sampler
+# daemon in this design, so a stale reading is impossible — the cost is that
+# this cannot tell you about a problem that has already passed, only the one
+# happening now. `docker logs` remains the record of what happened earlier.
+# ---------------------------------------------------------------------------
+
+# HTTP status for a URL, or 000 if nothing answered at all. Never fails: the
+# whole point is to report unreachability, not to exit on it.
+#
+# The `|| echo` fallback that would be the obvious way to write this is a
+# trap: on a refused connection curl prints "000" via -w AND exits non-zero,
+# so the fallback appends a second one and the result reads "000000".
+http_code() {
+  command -v curl >/dev/null 2>&1 || { echo "000"; return 0; }
+  local code
+  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time "${2:-8}" "$1" 2>/dev/null)" || true
+  echo "${code:-000}"
+}
+
+# First non-empty line of a `docker inspect` field, or a caller-supplied
+# default. The plain `cmd || echo default` form is not enough: when the Docker
+# daemon isn't reachable, the client writes an empty line to stdout *and*
+# exits non-zero, so the result comes back as a blank line followed by the
+# default rather than the default alone.
+docker_field() {
+  local default="$1"; shift
+  local out
+  out="$(docker inspect "$@" 2>/dev/null | grep -m1 -v '^[[:space:]]*$')" || true
+  echo "${out:-$default}"
+}
+
+# Docker's own health verdict for the container. "none" when the container
+# was started without a health check — which is the case for anything
+# deployed before this existed, and is a fact worth reporting rather than
+# quietly rendering as unhealthy.
+container_health_status() {
+  docker_field unknown \
+    -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CONTAINER_NAME"
+}
+
+cmd_health() {
+  local porcelain=0
+  [[ "${1:-}" == "--porcelain" ]] && porcelain=1
+
+  local state health_status restarts started
+  state="$(container_state)"
+  state="${state:-absent}"
+  health_status="none"
+  restarts="0"
+  started=""
+  if [[ "$state" != "absent" ]]; then
+    health_status="$(container_health_status)"
+    restarts="$(docker_field 0 -f '{{.RestartCount}}' "$CONTAINER_NAME")"
+    started="$(docker_field "" -f '{{.State.StartedAt}}' "$CONTAINER_NAME")"
+  fi
+
+  # Probe the app directly, and — separately — whatever the public actually
+  # reaches. When there's no proxy these are the same URL and the same answer;
+  # when there is one, the difference between them is the whole diagnosis.
+  local app_code public_code nginx_code="skipped"
+  app_code="$(http_code "$(app_direct_url)")"
+  public_code="$(http_code "$(public_local_url)")"
+  if [[ "$PROXY_ENABLED" -eq 1 ]]; then
+    nginx_code="$(http_code "http://127.0.0.1${DEPLOY_RESERVED_PREFIX}health" 5)"
+  fi
+
+  local nginx_service="not-installed"
+  if command -v nginx >/dev/null 2>&1; then
+    if command -v systemctl >/dev/null 2>&1; then
+      nginx_service="$(systemctl is-active nginx 2>/dev/null || echo inactive)"
+    else
+      nginx_service="installed"
+    fi
+  fi
+
+  local autoheal_state
+  autoheal_state="$(docker_field absent -f '{{.State.Status}}' "$AUTOHEAL_CONTAINER")"
+
+  # Resource lines, best-effort. `docker stats --no-stream` costs a second or
+  # two, which is acceptable for a command a human runs on purpose.
+  local mem_usage="unknown" cpu_pct="unknown"
+  if [[ "$state" == "running" ]]; then
+    local stats
+    stats="$(docker stats --no-stream --format '{{.MemUsage}}|{{.CPUPerc}}' "$CONTAINER_NAME" 2>/dev/null || true)"
+    if [[ -n "$stats" ]]; then
+      mem_usage="${stats%%|*}"
+      cpu_pct="${stats##*|}"
+    fi
+  fi
+  local root_disk
+  root_disk="$(df -h / 2>/dev/null | awk 'NR==2{print $5" used, "$4" free"}')"
+
+  # One verdict, in the order a person would actually diagnose it: is there a
+  # container, is it running, does the app answer, does the proxy answer, does
+  # the proxy reach the app.
+  local verdict detail
+  if [[ "$state" == "absent" ]]; then
+    verdict="not-deployed"
+    detail="No dashboard has been published on this instance yet."
+  elif [[ "$state" != "running" ]]; then
+    verdict="stopped"
+    detail="The container exists but is $state. Start it with: docker start $CONTAINER_NAME"
+  elif [[ "$app_code" == "000" ]]; then
+    verdict="app-not-responding"
+    detail="The container is running but the app inside it isn't answering. Check 'manage.sh logs'."
+  elif [[ "$PROXY_ENABLED" -eq 1 && "$nginx_code" != "200" ]]; then
+    verdict="proxy-down"
+    detail="The app is fine, but nginx isn't serving. Try: sudo nginx -t && sudo systemctl restart nginx"
+  elif [[ "$public_code" == "000" || "$public_code" -ge 500 ]]; then
+    verdict="proxy-cannot-reach-app"
+    detail="nginx is up and the app is up, but the proxy can't reach it (HTTP $public_code). Check /var/log/nginx/dashboard.error.log."
+  elif [[ "$health_status" == "unhealthy" ]]; then
+    verdict="unhealthy"
+    detail="The app answers, but Docker's health check is failing. It may be partly wedged."
+  else
+    verdict="ok"
+    detail="The dashboard is up and reachable."
+  fi
+
+  if [[ "$porcelain" -eq 1 ]]; then
+    echo "verdict=$verdict"
+    echo "container=$CONTAINER_NAME"
+    echo "state=$state"
+    echo "docker_health=$health_status"
+    echo "restarts=$restarts"
+    echo "started=$started"
+    echo "app_http=$app_code"
+    echo "public_http=$public_code"
+    echo "nginx_http=$nginx_code"
+    echo "nginx_service=$nginx_service"
+    echo "proxy_enabled=$PROXY_ENABLED"
+    echo "app_bind=$APP_BIND_ADDR:$APP_HOST_PORT"
+    echo "autoheal=$autoheal_state"
+    echo "mem_usage=$mem_usage"
+    echo "cpu_pct=$cpu_pct"
+    echo "root_disk=$root_disk"
+    echo "url=$(public_url)"
+    echo "detail=$detail"
+    return 0
+  fi
+
+  echo "Dashboard health"
+  echo "================"
+  echo "Verdict:        $verdict — $detail"
+  echo
+  echo "Container:      $CONTAINER_NAME ($state)"
+  echo "  Docker health $health_status"
+  echo "  Restarts      $restarts"
+  [[ -n "$started" ]] && echo "  Started       $started"
+  echo "  Memory        $mem_usage"
+  echo "  CPU           $cpu_pct"
+  echo
+  if [[ "$PROXY_ENABLED" -eq 1 ]]; then
+    echo "Serving:        nginx on port 80  ->  app on $APP_BIND_ADDR:$APP_HOST_PORT"
+    echo "  nginx service $nginx_service"
+    echo "  nginx itself  HTTP $nginx_code  (${DEPLOY_RESERVED_PREFIX}health)"
+  else
+    echo "Serving:        app published directly on $APP_BIND_ADDR:$APP_HOST_PORT (no proxy)"
+    echo "                run 'sudo ./deploy/bootstrap.sh' to put nginx in front"
+  fi
+  echo "  app direct    HTTP $app_code  ($(app_direct_url))"
+  echo "  public path   HTTP $public_code  ($(public_local_url))"
+  echo "  autoheal      $autoheal_state"
+  echo
+  echo "Host:"
+  echo "  root disk     ${root_disk:-unknown}"
+  echo
+  echo "URL:            $(public_url)"
+  echo
+  # Said explicitly because it is the single most common misreading of a
+  # green result, and the same caveat run_smoke_test() carries.
+  echo "Note: 'ok' means the dashboard is reachable and answering — not that it is"
+  echo "showing the right thing. Shiny and Streamlit render their own errors as a"
+  echo "page and still answer 200. Open it in a browser to check that."
+}
+
 cmd_url() {
   [[ "$(container_state)" == "running" ]] || {
     echo "The dashboard isn't running." >&2
     exit 1
   }
-  echo "http://$(public_ip)/"
+  public_url
 }
 
 cmd_logs() {
@@ -122,6 +319,7 @@ cmd_stop() {
 action="$1"; shift
 case "$action" in
   status)  cmd_status "${1:-}" ;;
+  health)  cmd_health "${1:-}" ;;
   url)     cmd_url ;;
   logs)    cmd_logs "${1:-}" ;;
   restart) cmd_restart ;;

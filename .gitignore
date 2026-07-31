@@ -26,3 +26,8 @@ examples/WORKSHOP-interactive-shiny-dashboards/
 # it exercises the auto-generation path — so running the documented test
 # shouldn't leave the tree dirty.
 examples/*/renv.lock
+
+# Host-specific bootstrap configuration. Untracked so `git pull` on an
+# instance never conflicts with local settings; deploy.env.example is the
+# tracked template.
+deploy/deploy.env

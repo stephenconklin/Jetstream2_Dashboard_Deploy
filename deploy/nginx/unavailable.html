@@ -1,0 +1,61 @@
+<!doctype html>
+<!--
+  Served by nginx for 502/503/504 — i.e. whenever the dashboard container is
+  rebuilding, stopped, or crashed. Installed to <MAINTENANCE_ROOT>/_deploy/
+  by deploy/bootstrap.sh.
+
+  Deliberately plain and self-contained: no external CSS, fonts or images,
+  because whatever is broken may well be the reason a request failed in the
+  first place, and a maintenance page that itself fails to load is worse than
+  none. Written for a researcher's audience — the people most likely to see
+  this are the ones visiting a colleague's dashboard, not the person who
+  deployed it, so it says what to do rather than what went wrong.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard unavailable</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #f6f7f9; color: #1c1e21;
+  }
+  main { max-width: 34rem; padding: 2.5rem 1.5rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul { margin: 0 0 1rem 1.25rem; padding: 0; }
+  li { margin-bottom: .35rem; }
+  .muted { color: #5c6470; font-size: .9rem; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #16181d; color: #e6e8eb; }
+    .muted { color: #9aa3af; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>This dashboard isn&rsquo;t answering right now</h1>
+  <p>
+    The web server is running, but the dashboard behind it isn&rsquo;t
+    responding. That usually means one of these:
+  </p>
+  <ul>
+    <li>It is being rebuilt or has just restarted, and is still starting up.</li>
+    <li>It was stopped on purpose.</li>
+    <li>It ran into an error and shut down.</li>
+  </ul>
+  <p>
+    Waiting a minute and reloading is worth trying first &mdash; a large
+    dashboard can take a while to come back after a restart.
+  </p>
+  <p class="muted">
+    If you look after this instance: <code>./deploy/manage.sh health</code>
+    will say which of the three it is.
+  </p>
+</main>
+</body>
+</html>

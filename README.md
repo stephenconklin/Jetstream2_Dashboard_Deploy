@@ -2,13 +2,18 @@
 
 Deployment tooling that helps scientific researchers get their data dashboards out of a laptop/notebook and onto a publicly accessible web server on [Jetstream2](https://jetstream-cloud.org/) — no DevOps background required. Point it at any **R Shiny**, **Plotly Dash**, **Python Shiny**, or **Streamlit** project and get it reachable in a browser on port 80, with no manual GDAL/GEOS wrangling, no hand-written package lists (where the framework allows it), and no figuring out which Dockerfile or run command to use.
 
-A single script, [`deploy/build_and_run.sh`](deploy/build_and_run.sh), auto-detects which of the four frameworks a dropped-in project is (from its code, not just filenames), builds a self-contained Docker image, and runs it bound to port 80. There's also a **desktop application** for researchers who'd rather not use a terminal at all. This README covers the basics; full details, design rationale, and the auto-detection story are in [`docs/deployment.md`](docs/deployment.md).
+A single script, [`deploy/build_and_run.sh`](deploy/build_and_run.sh), auto-detects which of the four frameworks a dropped-in project is (from its code, not just filenames), builds a self-contained Docker image, and runs it. A companion script, [`deploy/bootstrap.sh`](deploy/bootstrap.sh), provisions a bare instance to host it — Docker, swap, an nginx reverse proxy, TLS, and automatic restart of a wedged dashboard. There's also a **desktop application** for researchers who'd rather not use a terminal at all. This README covers the basics; full details, design rationale, and the auto-detection story are in [`docs/deployment.md`](docs/deployment.md).
 
 ## Quick start
+
+Set the instance up once, then deploy as often as you like:
 
 ```bash
 git clone https://github.com/stephenconklin/Jetstream2_Dashboard_Deploy.git
 cd Jetstream2_Dashboard_Deploy
+
+# One-time: provision the host (Docker, nginx, swap, TLS, health monitoring)
+sudo ./deploy/bootstrap.sh
 
 # Try it with a bundled self-test app first (one per framework):
 cp -r examples/r-shiny-hello-world/* deploy/app/
@@ -20,6 +25,12 @@ cp -r /path/to/your/project/* deploy/app/
 ```
 
 Visit `http://<instance-fixed-ip>/` in a browser.
+
+`bootstrap.sh` is optional — skip it and the container publishes port 80 directly, exactly as this tool has always worked. Run it and nginx serves port 80 while the app binds loopback only, which is what makes TLS, rate limiting, upload limits and a proper maintenance page possible. It can also do both halves at once:
+
+```bash
+sudo ./deploy/bootstrap.sh /path/to/your/project
+```
 
 ## Or use the desktop application
 
@@ -38,12 +49,18 @@ New to moving files onto a cloud instance? [Getting your files onto the instance
 ```
 deploy/
 ├── build_and_run.sh         # the one script: detects framework, builds, runs, smoke-tests
-├── manage.sh                # status / logs / restart / stop for a deployed app
+├── bootstrap.sh             # root-only: provision the host (Docker, nginx, TLS, swap, autoheal)
+├── deploy.env.example       # template for bootstrap's host-specific settings
+├── manage.sh                # status / health / logs / restart / stop for a deployed app
 ├── lint.sh                  # shellcheck + python syntax check
 ├── lib/
 │   ├── common.sh            # shared build/run/retry/smoke-test/data-dir logic
 │   ├── detect_framework.sh  # framework auto-detection
+│   ├── proxy.sh             # where the container binds, and how it's health-checked
 │   └── persist_mount.sh     # root-only: make a data volume survive reboot
+├── nginx/
+│   ├── dashboard.conf.template  # the reverse proxy config (WebSockets, rate limits, gzip)
+│   └── unavailable.html         # shown instead of a bare 502 while the app is down
 ├── docker/
 │   ├── Dockerfile.r-shiny        # R Shiny (Shiny Server)
 │   ├── Dockerfile.dash           # Plotly Dash (gunicorn)
@@ -78,15 +95,18 @@ See [`docs/deployment.md`](docs/deployment.md) for prerequisites, step-by-step i
 
 ## Managing the running app
 
-`build_and_run.sh` names both the image and the container `dashboard-app` by default (or whatever `[image-name]` you passed it), always bound to host port 80. To swap in a different project, just re-run `./deploy/build_and_run.sh` — no need to stop or remove anything first.
+`build_and_run.sh` names both the image and the container `dashboard-app` by default (or whatever `[image-name]` you passed it). To swap in a different project, just re-run `./deploy/build_and_run.sh` — no need to stop or remove anything first.
 
 ```bash
+./deploy/manage.sh health    # what's working, and which layer isn't
 docker ps                    # check what's running
 docker logs -f dashboard-app # view / follow app logs
 docker restart dashboard-app # restart without rebuilding
 ```
 
-See [`docs/deployment.md`](docs/deployment.md#managing-the-deployed-container) for the full command reference, including reclaiming disk space from old images.
+`manage.sh health` is the one to reach for when the dashboard doesn't load: with nginx in front, an app failure and a proxy failure look identical from a browser but need different fixes, and it says which you have. Note that a healthy verdict means *reachable*, not *correct* — Shiny and Streamlit render their own errors as a page and still answer 200.
+
+See [`docs/deployment.md`](docs/deployment.md#health-and-diagnosis) for the full command reference, including reclaiming disk space from old images.
 
 ## License
 

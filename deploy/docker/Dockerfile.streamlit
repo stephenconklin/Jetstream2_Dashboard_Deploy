@@ -57,8 +57,10 @@ ARG ENTRY_MODULE=streamlit_app.py
 ENV PORT=${PORT}
 ENV ENTRY_MODULE=${ENTRY_MODULE}
 EXPOSE ${PORT}
-# (No HEALTHCHECK here — python:3.11-slim doesn't ship curl, and
-# build_and_run.sh already smoke-tests the app from the host after startup.)
+# (No HEALTHCHECK line here, but the container does get one: build_and_run.sh
+# attaches it at `docker run` time via --health-cmd, because the port is only
+# known then and python:3.11-slim ships neither curl nor wget. See
+# app_health_cmd() in deploy/lib/proxy.sh.)
 
 # Exec form + `exec` so the app replaces the shell as PID 1 and receives
 # SIGTERM directly. With the previous shell-form CMD, PID 1 was /bin/sh,
