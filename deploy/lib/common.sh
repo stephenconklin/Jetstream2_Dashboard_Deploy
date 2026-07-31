@@ -490,20 +490,17 @@ run_container() {
   # repeated ID reports an error for the second one.
   local claimed_ids claimed_names port
   claimed_ids=""
-  claimed_names=""
   for port in 80 "$APP_HOST_PORT"; do
-    claimed_ids+="$(docker ps -aq --filter "publish=$port")"$'\n'
-    claimed_names+="$(docker ps -a --filter "publish=$port" --format '{{.Names}}')"$'\n'
+    claimed_ids+="$(containers_publishing_host_port "$port")"$'\n'
   done
   # `grep -v '^$'` first: the appends above leave a blank line per port with
   # nothing on it, and sort would otherwise pass those through as empty
   # arguments to `docker rm`.
   claimed_ids="$(printf '%s' "$claimed_ids" | grep -v '^[[:space:]]*$' | sort -u | tr '\n' ' ')" || true
-  claimed_names="$(printf '%s' "$claimed_names" | grep -v '^[[:space:]]*$' | sort -u | tr '\n' ' ')" || true
   if [[ -n "${claimed_ids// /}" ]]; then
-    # Names, not the 64-char IDs used for the removal itself — the point of
-    # the message is to tell you which app is being replaced.
-    echo "Replacing container(s) already bound to the host port: ${claimed_names% }"
+    # shellcheck disable=SC2086
+    claimed_names="$(container_names_for_ids $claimed_ids)"
+    echo "Replacing container(s) already bound to the host port: $claimed_names"
     # Deliberately unquoted: this is a space-separated list and each ID must
     # become a separate argument. IDs are hex, so there's nothing for
     # globbing to expand.

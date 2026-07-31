@@ -120,6 +120,42 @@ public_local_url() {
   fi
 }
 
+# IDs of containers publishing a given HOST port, one per line.
+#
+# Deliberately NOT `docker ps --filter publish=<port>`. What that filter
+# matches is not reliably the host port across Docker versions, and both ways
+# of getting it wrong are serious: too narrow and a stale container keeps the
+# port, so nginx can never bind it and the provision fails half-done; too
+# broad and `docker rm -f` destroys an unrelated container — which on a
+# Jetstream2 desktop instance can be the Guacamole server the researcher is
+# connected through, killing the session that is running the deploy.
+#
+# Reading .HostConfig.PortBindings makes the question unambiguous: it is the
+# host side by definition, it is what the container was created with, and
+# unlike .NetworkSettings.Ports it is still populated for a stopped container
+# — which is exactly one of the cases this has to catch.
+containers_publishing_host_port() {
+  local want="$1" cid
+  for cid in $(docker ps -aq 2>/dev/null); do
+    if docker inspect -f \
+         '{{range $p, $b := .HostConfig.PortBindings}}{{range $b}}{{.HostPort}}{{"\n"}}{{end}}{{end}}' \
+         "$cid" 2>/dev/null | grep -qx -- "$want"; then
+      echo "$cid"
+    fi
+  done
+}
+
+# Container names for the IDs above, space-separated, for messages. Names
+# rather than 64-char IDs: the point of the message is to say which app is
+# being replaced.
+container_names_for_ids() {
+  local cid names=""
+  for cid in "$@"; do
+    names+="$(docker inspect -f '{{.Name}}' "$cid" 2>/dev/null | sed 's|^/||') "
+  done
+  echo "${names% }"
+}
+
 # Docker health-check command for a framework, run *inside* the container.
 #
 # Not a HEALTHCHECK line in each Dockerfile, which is the more obvious place

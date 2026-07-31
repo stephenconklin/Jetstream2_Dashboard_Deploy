@@ -372,11 +372,13 @@ ok "config valid ($NGINX_SITE)"
 # passed a project directory.
 # ---------------------------------------------------------------------------
 step "Cutover"
-PORT80_CONTAINERS="$(docker ps -aq --filter "publish=80" 2>/dev/null || true)"
+PORT80_CONTAINERS="$(containers_publishing_host_port 80 | tr '\n' ' ')"
+PORT80_CONTAINERS="${PORT80_CONTAINERS% }"
 if [[ -n "$PORT80_CONTAINERS" ]]; then
-  PORT80_NAMES="$(docker ps -a --filter "publish=80" --format '{{.Names}}' | tr '\n' ' ')"
+  # shellcheck disable=SC2086
+  PORT80_NAMES="$(container_names_for_ids $PORT80_CONTAINERS)"
   echo
-  echo "    A container is bound to host port 80: ${PORT80_NAMES% }"
+  echo "    A container is bound to host port 80: $PORT80_NAMES"
   echo "    nginx needs that port, so it has to be removed and re-published"
   echo "    behind the proxy. The image is kept, so re-publishing is a fast"
   echo "    cached rebuild rather than a full one."
@@ -398,7 +400,7 @@ if [[ -n "$PORT80_CONTAINERS" ]]; then
   fi
   # shellcheck disable=SC2086
   docker rm -f $PORT80_CONTAINERS >/dev/null
-  ok "removed ${PORT80_NAMES% } — the dashboard is offline from here until it re-publishes"
+  ok "removed $PORT80_NAMES — the dashboard is offline from here until it re-publishes"
 elif ss -tlnp 2>/dev/null | grep -q ':80 ' && ! ss -tlnp 2>/dev/null | grep ':80 ' | grep -q nginx; then
   echo
   ss -tlnp 2>/dev/null | grep ':80 ' | sed 's/^/    /' || true
