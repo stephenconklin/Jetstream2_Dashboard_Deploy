@@ -471,7 +471,7 @@ if [[ "$ENABLE_AUTOHEAL" == "yes" ]]; then
       --restart unless-stopped \
       -e AUTOHEAL_CONTAINER_LABEL=autoheal \
       -e AUTOHEAL_INTERVAL=30 \
-      -e AUTOHEAL_START_PERIOD=180 \
+      -e AUTOHEAL_START_PERIOD="${HEALTH_START_PERIOD%s}" \
       -v /var/run/docker.sock:/var/run/docker.sock \
       --memory 64m \
       --log-opt max-size=5m --log-opt max-file=2 \

@@ -270,7 +270,9 @@ It is a **liveness** check for the same reason as above, and it deliberately tre
 
 `--restart unless-stopped` only reacts to the app process *exiting*. The failure worth catching is the one where it doesn't — alive, but no longer serving. Docker does not act on health status by itself, so bootstrap starts an **autoheal** sidecar that watches for `health=unhealthy` on containers labelled `autoheal=true` and restarts them, turning an outage that lasts until a human notices into one that lasts a few minutes. Disable it with `ENABLE_AUTOHEAL="no"`.
 
-The health check's start period is 180s, charged against the slowest realistic case — a geospatial R Shiny app reading a large raster at startup. A shorter window would have autoheal restart it into a loop it could never escape.
+The start period is **300s**, pinned to `app_init_timeout` in `deploy/docker/shiny-server.conf` — the longest startup allowance any of the four frameworks grants itself, because a geospatial Shiny worker attaching sf/terra/GDAL/PROJ genuinely takes minutes to report "Listening on". A start period shorter than that allowance marks a healthy app unhealthy while it is still booting, which autoheal then "fixes" by restarting it, forever. **Raise both together or neither** — the constant is `HEALTH_START_PERIOD` in `deploy/lib/proxy.sh`.
+
+The post-deploy smoke test uses the same window, for the same reason: a flat 60s wait reports a slow-but-fine app as a failed deploy, and when `bootstrap.sh` is driving that aborts the whole provision. A long window doesn't make real failures slower to find, though — the loop watches the container's restart count and bails immediately if the app crashed and was picked back up.
 
 ---
 

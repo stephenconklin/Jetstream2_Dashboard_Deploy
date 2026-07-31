@@ -38,6 +38,19 @@ PROXY_ENV_FILE="${DASHBOARD_PROXY_ENV:-/etc/dashboard-deploy/proxy.env}"
 # common.sh must never mistake it for a stale app container.
 AUTOHEAL_CONTAINER="dashboard-autoheal"
 
+# Grace period before a container's health check starts counting failures,
+# and the matching window during which the autoheal sidecar ignores everything
+# after its own start.
+#
+# Pinned to `app_init_timeout` in deploy/docker/shiny-server.conf, which is the
+# longest startup allowance any of the four frameworks grants itself. A
+# geospatial R Shiny worker attaching sf/terra/GDAL/PROJ really does take
+# minutes to report "Listening on", and a start period shorter than that
+# allowance marks a perfectly healthy app unhealthy while it is still booting —
+# which autoheal then "fixes" by restarting it, forever. Raise both together or
+# neither.
+HEALTH_START_PERIOD="300s"
+
 # Every path under this prefix belongs to the deployment tooling (nginx's own
 # health endpoint, the maintenance page) and is not proxied to the app.
 # Documented in docs/deployment.md so a project knows not to claim it.
@@ -131,7 +144,7 @@ app_health_cmd() {
     r-shiny)
       # Dockerfile.r-shiny installs curl for the Shiny Server .deb download,
       # so it is always present in this image.
-      echo "curl -fsS -o /dev/null --max-time 10 http://127.0.0.1:${port}/"
+      echo "curl -fsS -o /dev/null --max-time 20 http://127.0.0.1:${port}/"
       ;;
     dash|python-shiny|streamlit)
       # Python is guaranteed by the base image these three build on.
@@ -139,7 +152,7 @@ app_health_cmd() {
 python -c "
 import sys, urllib.error, urllib.request
 try:
-    code = urllib.request.urlopen('http://127.0.0.1:${port}/', timeout=10).status
+    code = urllib.request.urlopen('http://127.0.0.1:${port}/', timeout=20).status
 except urllib.error.HTTPError as exc:
     code = exc.code
 except Exception:

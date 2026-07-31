@@ -530,19 +530,27 @@ run_container() {
   # do that on its own: it only reacts to the process *exiting*, and the
   # failure mode worth catching here is the one where it doesn't.
   #
-  # start-period is generous because it is charged against the slowest case,
-  # not the typical one — a geospatial R Shiny app reading a large raster at
-  # startup legitimately takes minutes, and a shorter window would mark it
-  # unhealthy and have autoheal restart it into a loop it can never escape.
+  # start-period is charged against the slowest case, not the typical one, and
+  # it must not be shorter than the app's own startup allowance — otherwise a
+  # legitimately slow app is marked unhealthy while it is still starting, and
+  # autoheal restarts it into a loop it can never escape.
+  #
+  # HEALTH_START_PERIOD is therefore pinned to shiny-server.conf's
+  # `app_init_timeout`, which is the longest such allowance any framework here
+  # has: a geospatial Shiny worker attaching sf/terra/GDAL/PROJ genuinely takes
+  # minutes before it reports "Listening on". Keep the two in sync — raising
+  # app_init_timeout without raising this reintroduces the restart loop.
   local health_args=()
   local health_cmd
   if health_cmd="$(app_health_cmd "$FRAMEWORK" "$INTERNAL_PORT")"; then
     health_args=(
       --health-cmd "$health_cmd"
       --health-interval 30s
-      --health-timeout 15s
+      # Comfortably above the probe's own --max-time, so a slow-but-alive
+      # response is recorded as slow rather than killed and counted a failure.
+      --health-timeout 30s
       --health-retries 3
-      --health-start-period 180s
+      --health-start-period "$HEALTH_START_PERIOD"
       # What autoheal matches on. Harmless when no sidecar is running.
       --label autoheal=true
     )
@@ -619,18 +627,41 @@ run_smoke_test() {
   app_url="$(app_direct_url)"
   echo "Waiting for the app to respond on ${app_url}..."
   if command -v curl >/dev/null 2>&1; then
-    local smoke_test_ok=0
-    # `_`: the counter is only there to bound the loop at 30 tries (~60s).
-    for _ in $(seq 1 30); do
+    local smoke_test_ok=0 crashed=0 waited=0
+    # The window matches the app's own startup allowance rather than a flat
+    # 60s. A geospatial R Shiny worker is given 300s to attach sf/terra/GDAL
+    # (shiny-server.conf's app_init_timeout), and a shorter wait here reports
+    # a perfectly healthy app as a failed deploy — which, when bootstrap.sh
+    # is driving, aborts the whole provision.
+    local deadline="${HEALTH_START_PERIOD%s}"
+    while [[ "$waited" -lt "$deadline" ]]; do
       # 2>/dev/null: -S would otherwise print "curl: (7) Failed to connect"
-      # on every poll while the app is still starting — up to 30 alarming
+      # on every poll while the app is still starting — dozens of alarming
       # error lines during an ordinary, successful startup. A genuine
       # failure is reported by the branch below, with the container's logs.
       if curl -fsS -o /dev/null "$app_url" 2>/dev/null; then
         smoke_test_ok=1
         break
       fi
+
+      # Waiting out a five-minute window for a container that has already
+      # died is the wrong trade — a long window must not make a real failure
+      # slower to report. The container runs with `--restart unless-stopped`,
+      # so a crashing app doesn't stay dead long enough to observe reliably
+      # by status alone; a restart count above zero is the durable evidence
+      # that it started, fell over, and was picked back up.
+      if [[ "$(docker inspect -f '{{.RestartCount}}' "$CONTAINER_NAME" 2>/dev/null || echo 0)" -gt 0 ]]; then
+        crashed=1
+        break
+      fi
+
       sleep 2
+      waited=$((waited + 2))
+      # Say something periodically: several silent minutes is indistinguishable
+      # from a hang, and this tool's audience has no reason to assume otherwise.
+      if [[ $((waited % 30)) -eq 0 ]]; then
+        echo "  still starting (${waited}s of up to ${deadline}s)..."
+      fi
     done
     if [[ "$smoke_test_ok" -eq 1 ]]; then
       # The app is up. When nginx is in front, that is not yet the whole
@@ -669,8 +700,14 @@ run_smoke_test() {
       echo "  the running container for you."
       echo
     else
-      echo "Warning: container '$CONTAINER_NAME' started, but never responded on" >&2
-      echo "$app_url within 60s. The app process died at startup rather than serving. The image" >&2
+      if [[ "$crashed" -eq 1 ]]; then
+        echo "Warning: container '$CONTAINER_NAME' started, then crashed and was restarted" >&2
+        echo "before it ever answered on $app_url." >&2
+      else
+        echo "Warning: container '$CONTAINER_NAME' started, but never responded on" >&2
+        echo "$app_url within ${deadline}s." >&2
+      fi
+      echo "The app process died at startup rather than serving. The image" >&2
       echo "built fine, so this is a runtime failure — most often one of:" >&2
       echo "  * the data folder doesn't hold the files the app expects (check the logs" >&2
       echo "    below for a missing file; the folder you chose is mounted OVER the app's" >&2
