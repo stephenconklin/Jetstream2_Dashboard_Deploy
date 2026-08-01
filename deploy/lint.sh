@@ -33,6 +33,7 @@ FILES=(
   deploy/bootstrap.sh
   deploy/lib/common.sh
   deploy/lib/proxy.sh
+  deploy/lib/disk.sh
   deploy/lib/detect_framework.sh
   deploy/lib/persist_mount.sh
   deploy/docker/apt_retry.sh

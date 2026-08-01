@@ -57,10 +57,12 @@ deploy/
 │   ├── common.sh            # shared build/run/retry/smoke-test/data-dir logic
 │   ├── detect_framework.sh  # framework auto-detection
 │   ├── proxy.sh             # where the container binds, and how it's health-checked
+│   ├── disk.sh              # free space, and reclaiming it (shared with bootstrap)
 │   └── persist_mount.sh     # root-only: make a data volume survive reboot
 ├── nginx/
 │   ├── dashboard.conf.template  # the reverse proxy config (WebSockets, rate limits, gzip)
-│   └── unavailable.html         # shown instead of a bare 502 while the app is down
+│   ├── unavailable.html         # shown instead of a bare 502 while the app is down
+│   └── README-unavailable.md    # why that page looks the way it does
 ├── docker/
 │   ├── Dockerfile.r-shiny        # R Shiny (Shiny Server)
 │   ├── Dockerfile.dash           # Plotly Dash (gunicorn)
@@ -98,15 +100,32 @@ See [`docs/deployment.md`](docs/deployment.md) for prerequisites, step-by-step i
 `build_and_run.sh` names both the image and the container `dashboard-app` by default (or whatever `[image-name]` you passed it). To swap in a different project, just re-run `./deploy/build_and_run.sh` — no need to stop or remove anything first.
 
 ```bash
-./deploy/manage.sh health    # what's working, and which layer isn't
-docker ps                    # check what's running
-docker logs -f dashboard-app # view / follow app logs
-docker restart dashboard-app # restart without rebuilding
+# Is it working, and if not, which layer is broken?
+./deploy/manage.sh health
+./deploy/manage.sh status              # shorter: deployed / running / answering, plus the URL
+./deploy/manage.sh logs 200            # the app's own log (stdout AND stderr)
+./deploy/manage.sh restart             # restart without rebuilding
+./deploy/manage.sh stop                # stop it (stays stopped, including across reboots)
+./deploy/manage.sh disk                # free space, and how much Docker can give back
+./deploy/manage.sh cleanup             # give it back (safe: leaves your image running)
+./deploy/manage.sh report              # one file to attach when asking for help
+
+# The host side
+sudo ./deploy/bootstrap.sh --check     # docker, nginx, swap, disk, proxy state, open ports
+sudo ss -tlnp | grep -E ':80|:8080'    # nginx on 0.0.0.0:80, app on 127.0.0.1:8080 ONLY
+sudo nginx -t && sudo systemctl reload nginx
+sudo tail -f /var/log/nginx/dashboard.error.log
+
+# Reclaiming disk space (bootstrap warns below 15GB free — an R geospatial build wants more)
+./deploy/manage.sh disk                # or by hand: df -h / && docker system df
+./deploy/manage.sh cleanup             # or by hand: docker image prune -f; docker builder prune -f
 ```
+
+Researchers get all of this without a terminal: the desktop application's **Manage** tab renders the same `manage.sh` output, re-checks every 30 seconds on its own, and has buttons for freeing up space and saving a diagnostic report.
 
 `manage.sh health` is the one to reach for when the dashboard doesn't load: with nginx in front, an app failure and a proxy failure look identical from a browser but need different fixes, and it says which you have. Note that a healthy verdict means *reachable*, not *correct* — Shiny and Streamlit render their own errors as a page and still answer 200.
 
-See [`docs/deployment.md`](docs/deployment.md#health-and-diagnosis) for the full command reference, including reclaiming disk space from old images.
+See [`docs/deployment.md`](docs/deployment.md#command-reference) for the full command reference, [health and diagnosis](docs/deployment.md#health-and-diagnosis) for what each verdict means, and [reclaiming disk space](docs/deployment.md#reclaiming-disk-space) for the rest of the cleanup options.
 
 ## License
 

@@ -7,6 +7,9 @@
 #   ./deploy/manage.sh logs [N]
 #   ./deploy/manage.sh restart
 #   ./deploy/manage.sh stop
+#   ./deploy/manage.sh disk [--porcelain]
+#   ./deploy/manage.sh cleanup [--porcelain]
+#   ./deploy/manage.sh report [path]
 #
 # These are thin wrappers over plain `docker` commands, which still work
 # directly and are documented in docs/deployment.md — nothing here is
@@ -21,6 +24,10 @@ set -euo pipefail
 TOOLING_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source-path=SCRIPTDIR
 source "$TOOLING_DIR/lib/common.sh"
+# Free space, and reclaiming it. Shared with bootstrap.sh so the threshold it
+# warns at and the one reported here cannot drift apart.
+# shellcheck source-path=SCRIPTDIR
+source "$TOOLING_DIR/lib/disk.sh"
 
 CONTAINER_NAME="${CONTAINER_NAME:-dashboard-app}"
 
@@ -30,7 +37,8 @@ CONTAINER_NAME="${CONTAINER_NAME:-dashboard-app}"
 resolve_app_bind
 
 usage() {
-  echo "usage: manage.sh {status [--porcelain]|health [--porcelain]|url|logs [N]|restart|stop}" >&2
+  echo "usage: manage.sh {status [--porcelain]|health [--porcelain]|url|logs [N]|" >&2
+  echo "                  restart|stop|disk [--porcelain]|cleanup [--porcelain]|report [path]}" >&2
   exit 2
 }
 
@@ -315,6 +323,112 @@ cmd_stop() {
   echo "reboot, until you start it again with:  docker start $CONTAINER_NAME"
 }
 
+# ---------------------------------------------------------------------------
+# disk / cleanup
+#
+# Running out of disk is the failure researchers are least equipped to
+# recognise: it surfaces as a compile or extraction error hundreds of lines
+# into a build log, naming a file rather than the disk. bootstrap.sh warns
+# about it at provision time; these two verbs are how it stays visible (and
+# fixable) afterwards, without anyone needing to know what a dangling image
+# is.
+# ---------------------------------------------------------------------------
+
+cmd_disk() {
+  if [[ "${1:-}" == "--porcelain" ]]; then
+    print_disk_porcelain "$CONTAINER_NAME"
+  else
+    print_disk_human "$CONTAINER_NAME"
+  fi
+}
+
+cmd_cleanup() {
+  local porcelain=0
+  [[ "${1:-}" == "--porcelain" ]] && porcelain=1
+
+  local result before after freed
+  result="$(reclaim_disk_space)"
+  before="${result%%|*}"
+  after="$(echo "$result" | cut -d'|' -f2)"
+  freed="${result##*|}"
+
+  if [[ "$porcelain" -eq 1 ]]; then
+    echo "before_free_gb=$before"
+    echo "after_free_gb=$after"
+    echo "freed_gb=$freed"
+    echo "root_summary=$(disk_root_summary)"
+    echo "low_disk=$(disk_is_low)"
+    return 0
+  fi
+
+  if [[ -n "$freed" ]]; then
+    echo "Reclaimed about ${freed}GB — now $(disk_root_summary)."
+  else
+    echo "Cleanup finished. Now $(disk_root_summary)."
+  fi
+  echo
+  echo "Removed leftover build layers and the build cache. Your dashboard's own"
+  echo "image was not touched, so it is still running and can still be restarted."
+  echo "The next publish will be slower, because the build cache has to be rebuilt."
+}
+
+# ---------------------------------------------------------------------------
+# report
+#
+# One file to attach when asking for help. It exists because the alternative
+# is asking a researcher to run six commands over a remote desktop and paste
+# the output back, which in practice yields a screenshot of part of one of
+# them.
+#
+# Deliberately assembled from the verbs above rather than collecting anything
+# new: whatever this reports is something they could have read themselves in
+# the GUI, which keeps it honest and keeps it from drifting.
+# ---------------------------------------------------------------------------
+cmd_report() {
+  local out="${1:-}"
+  [[ -n "$out" ]] || out="$HOME/dashboard-deploy-logs/report-$(date +%Y%m%d-%H%M%S).txt"
+  mkdir -p "$(dirname "$out")"
+
+  {
+    echo "Dashboard deploy report"
+    echo "Generated: $(date)"
+    echo "Host:      $(uname -srm)"
+    echo "User:      ${USER:-unknown}"
+    echo
+    echo "=== health ==="
+    cmd_health || true
+    echo
+    echo "=== disk ==="
+    print_disk_human "$CONTAINER_NAME" || true
+    echo
+    echo "=== containers ==="
+    docker ps -a --format '{{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}' 2>/dev/null || true
+    echo
+    echo "=== proxy state ==="
+    if [[ -r "$PROXY_ENV_FILE" ]]; then
+      cat "$PROXY_ENV_FILE"
+    else
+      echo "(none — the app publishes directly on port 80)"
+    fi
+    echo
+    echo "=== nginx ==="
+    if command -v nginx >/dev/null 2>&1; then
+      nginx -v 2>&1 || true
+      # Root-owned on a provisioned host. Absent output here is itself a fact
+      # worth having, so failure is not an error.
+      tail -n 40 /var/log/nginx/dashboard.error.log 2>/dev/null \
+        || echo "(could not read /var/log/nginx/dashboard.error.log)"
+    else
+      echo "(nginx is not installed)"
+    fi
+    echo
+    echo "=== app log (last 200 lines) ==="
+    cmd_logs 200 2>&1 || true
+  } > "$out" 2>&1
+
+  echo "$out"
+}
+
 [[ $# -ge 1 ]] || usage
 action="$1"; shift
 case "$action" in
@@ -324,5 +438,8 @@ case "$action" in
   logs)    cmd_logs "${1:-}" ;;
   restart) cmd_restart ;;
   stop)    cmd_stop ;;
+  disk)    cmd_disk "${1:-}" ;;
+  cleanup) cmd_cleanup "${1:-}" ;;
+  report)  cmd_report "${1:-}" ;;
   *)       usage ;;
 esac

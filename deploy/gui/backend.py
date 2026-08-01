@@ -344,17 +344,7 @@ def _stop_preflight_containers() -> None:
 
 def container_status() -> dict[str, str]:
     """Current app state, via manage.sh. Empty dict if it isn't available."""
-    if not MANAGE.exists():
-        return {}
-    proc = _run([str(MANAGE), "status", "--porcelain"], timeout=30)
-    if proc.returncode != 0:
-        return {}
-    out: dict[str, str] = {}
-    for line in proc.stdout.splitlines():
-        key, _, value = line.strip().partition("=")
-        if key:
-            out[key] = value
-    return out
+    return _porcelain("status", timeout=30)
 
 
 def health() -> dict[str, str]:
@@ -369,20 +359,10 @@ def health() -> dict[str, str]:
     Empty dict when the command isn't available or fails, so callers can fall
     back to the simpler status display rather than showing an error.
     """
-    if not MANAGE.exists():
-        return {}
     # Longer than the other verbs: this runs several HTTP probes plus a
     # `docker stats` sample, and a wedged app makes each probe wait out its
     # own timeout rather than failing fast.
-    proc = _run([str(MANAGE), "health", "--porcelain"], timeout=90)
-    if proc.returncode != 0:
-        return {}
-    out: dict[str, str] = {}
-    for line in proc.stdout.splitlines():
-        key, _, value = line.strip().partition("=")
-        if key:
-            out[key] = value
-    return out
+    return _porcelain("health", timeout=90)
 
 
 # What each verdict from manage.sh means, in the words a researcher needs.
@@ -406,6 +386,73 @@ def manage(action: str) -> str:
         raise BackendError(f"Could not {action} the app.",
                            proc.stderr or proc.stdout, proc.returncode)
     return proc.stdout
+
+
+def _porcelain(action: str, timeout: int) -> dict[str, str]:
+    """Run a manage.sh verb in ``--porcelain`` mode and parse its key/values."""
+    if not MANAGE.exists():
+        return {}
+    proc = _run([str(MANAGE), action, "--porcelain"], timeout=timeout)
+    if proc.returncode != 0:
+        return {}
+    out: dict[str, str] = {}
+    for line in proc.stdout.splitlines():
+        key, _, value = line.strip().partition("=")
+        if key:
+            out[key] = value
+    return out
+
+
+def disk() -> dict[str, str]:
+    """Free space and what Docker is using, via ``manage.sh disk``.
+
+    The threshold in ``low_disk`` is the shell's, shared with bootstrap.sh —
+    do not second-guess it here. Running out of disk mid-build is the failure
+    a researcher is least equipped to recognise, because it surfaces as a
+    compile error deep in a log rather than as anything about the disk.
+    """
+    return _porcelain("disk", timeout=45)
+
+
+def cleanup() -> dict[str, str]:
+    """Reclaim leftover build layers and the build cache.
+
+    Safe by construction — see ``reclaim_disk_space()`` in lib/disk.sh for
+    what is deliberately left alone (the dashboard's own image, the autoheal
+    sidecar, and any stopped container). The generous timeout is because
+    pruning a large build cache is disk-bound and genuinely slow on the small
+    volumes these instances have.
+    """
+    if not MANAGE.exists():
+        raise BackendError("The management script is not available here.")
+    proc = _run([str(MANAGE), "cleanup", "--porcelain"], timeout=900)
+    if proc.returncode != 0:
+        raise BackendError("Could not free up space.",
+                           proc.stderr or proc.stdout, proc.returncode)
+    out: dict[str, str] = {}
+    for line in proc.stdout.splitlines():
+        key, _, value = line.strip().partition("=")
+        if key:
+            out[key] = value
+    return out
+
+
+def save_report() -> Path:
+    """Write a diagnostic report and return its path.
+
+    One file to attach when asking for help, assembled by the shell from the
+    same facts the GUI already shows. The alternative is asking someone on a
+    remote desktop to run six commands and paste the output back, which in
+    practice produces a photograph of part of one of them.
+    """
+    if not MANAGE.exists():
+        raise BackendError("The management script is not available here.")
+    proc = _run([str(MANAGE), "report"], timeout=300)
+    path = proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else ""
+    if proc.returncode != 0 or not path:
+        raise BackendError("Could not write the report.",
+                           proc.stderr or proc.stdout, proc.returncode)
+    return Path(path)
 
 
 PROJECTS_DIR = Path.home() / "dashboard-projects"

@@ -43,6 +43,8 @@ sudo ./deploy/bootstrap.sh /path/to/my/project   # ...and deploy in one go
 
 It installs Docker (if missing), a swapfile, nginx, TLS if you have a DNS name, and the autoheal sidecar — then writes `/etc/dashboard-deploy/proxy.env`, which is what tells `build_and_run.sh` to publish behind the proxy.
 
+It also **warns when `/` has under 15GB free**, with the prune commands to fix it. That's a rule of thumb rather than a hard requirement — an R geospatial image is roughly 6–8GB on top of a ~4.5GB `rocker/geospatial` base, plus a build cache that grows with every rebuild, while the Python frameworks need far less — so it's a warning, never a refusal to provision. It's reported here because running out of disk *mid-build* is one of the least legible failures this tool can produce: it surfaces as a compile or extraction error hundreds of lines into a build log, naming a file rather than the disk. See [Reclaiming disk space](#reclaiming-disk-space).
+
 The script is **idempotent**: re-running it is the normal way to apply a change from `deploy/deploy.env`. Every step detects existing state and skips.
 
 | Command | Effect |
@@ -165,7 +167,9 @@ Because bootstrap re-renders the site config from the template on every run, it 
 
    ```console
    $ ./deploy/build_and_run.sh --dry-run --porcelain /path/to/project
+   project_dir=/path/to/project
    framework=r-shiny
+   entry_file=app.R
    entry_point_desc=app.R
    base_image=rocker/geospatial:4.4.1
    deps_state=will-generate-renv
@@ -174,6 +178,10 @@ Because bootstrap re-renders the site config from the template on every run, it 
    has_apt_txt=0
    container_port=3838
    data_mount_target=/srv/shiny-server/data
+   proxy_enabled=1
+   app_bind_addr=127.0.0.1
+   app_host_port=8080
+   server_name=
    ```
 
    `deps_state` is one of `present`, `will-generate-renv`, `will-generate-from-uv`, or `missing`. Keys may be added in future versions but existing ones won't be renamed, and warnings stay on stderr so capturing stdout gives a clean stream.
@@ -192,7 +200,11 @@ All optional; each is described in more detail in the relevant section below.
 | `BASE_IMAGE` | per framework | Swap the base image (R: `rocker/r-ver:4.4.1`, auto-upgraded to `rocker/geospatial:4.4.1`; Python: `python:3.11-slim`). |
 | `DATA_DIR` | prompted if the project has `data/` | Host path bind-mounted into the container and exposed as a `DATA_DIR` env var inside it. |
 | `BUILD_PLATFORM` | auto (`linux/amd64` for R Shiny on non-amd64 hosts) | `docker build --platform` target. |
-| `CONTAINER_PORT` | per framework (3838/8050/8000/8501) | The port the app listens on *inside* the container, if a project's server is configured off-default. The host side is always 80. |
+| `CONTAINER_PORT` | per framework (3838/8050/8000/8501) | The port the app listens on *inside* the container, if a project's server is configured off-default. The host side is decided separately — see below. |
+| `CONTAINER_NAME` | `dashboard-app` | Which container `manage.sh` operates on. `build_and_run.sh` takes the same thing as its optional second argument instead. |
+| `DASHBOARD_PROXY_ENV` | `/etc/dashboard-deploy/proxy.env` | Path to the proxy state file. Exists so the whole nginx path can be exercised without root; you shouldn't need it in production. |
+
+**The host side of the port mapping is not an environment variable** — it comes from the proxy state file `bootstrap.sh` writes. With nginx in front the container publishes `127.0.0.1:8080` (`APP_HOST_PORT` in `deploy/deploy.env`); without it, `0.0.0.0:80`. See [The nginx front end](#the-nginx-front-end).
 
 **How the genericization works:**
 
@@ -212,10 +224,10 @@ All optional; each is described in more detail in the relevant section below.
 - **A `data/` folder in the project is a convenience, not the trigger.** `DATA_DIR` is mounted whenever it is set, whether or not the project contains a `data/` directory. This matters because the recommended arrangement — keeping a large dataset on a storage volume instead of inside the project — *removes* the `data/` folder that the dry-run summary reports on. A project set up correctly can therefore report `data/ directory: not in the project` and still need, and get, a mount. What `has_data_dir` really means is "this project will definitely break without a data mount", not "this project is the only kind that can have one".
 - **Data is bind-mounted AND passed as a container env var, never baked into the image.** If the project has a `data/` directory, `build_and_run.sh` bind-mounts a host path over a framework-specific target (`/srv/shiny-server/data` for R Shiny, `/app/data` for the 3 Python frameworks) at runtime instead of copying its contents into the image, and also sets a `DATA_DIR` env var inside the container pointing at that same path — set `DATA_DIR=/path/to/data ./build_and_run.sh` to specify the host path non-interactively, or leave `DATA_DIR` unset and the script will prompt for it (with a nudge toward the typical Jetstream2 storage volume location, `/media/volume/<volume-name>/...`). Either way, updating the data only needs a `docker restart`, not a rebuild. If the project has no `data/` directory, nothing is prompted or mounted.
   - **What this requires of the app's code:** an R Shiny app must reference files with a project-root-relative path — e.g. `read_csv("data/wq_baltimore.csv")` — since that's what resolves to Shiny Server's `app_dir` (`/srv/shiny-server`) and where the mount lands. A Python app (Dash/Python Shiny/Streamlit) can instead just read `os.environ["DATA_DIR"]` directly — more portable, since it doesn't hardcode a path convention. An app that already has its own env var name for this (e.g. a `VI_DATACUBE_ROOT`-style variable) can bridge with a one-line shim at the top of its entry file: `os.environ.setdefault("VI_DATACUBE_ROOT", os.environ["DATA_DIR"])`.
-- **Each framework has its own internal container port**, looked up in one place (`container_port_for_framework()` in [`deploy/lib/common.sh`](../deploy/lib/common.sh)): 3838 for Shiny Server, 8050 for Dash (gunicorn), 8000 for Python Shiny (`shiny run`), 8501 for Streamlit. Always mapped to host port 80 via `docker run -p 80:<port>` — Docker's port mapping handles the privileged bind, so no Nginx/reverse proxy is needed.
+- **Each framework has its own internal container port**, looked up in one place (`container_port_for_framework()` in [`deploy/lib/common.sh`](../deploy/lib/common.sh)): 3838 for Shiny Server, 8050 for Dash (gunicorn), 8000 for Python Shiny (`shiny run`), 8501 for Streamlit. **The host side is separate**, and comes from `resolve_app_bind()` in [`proxy.sh`](../deploy/lib/proxy.sh): `-p 127.0.0.1:8080:<port>` behind nginx, or `-p 0.0.0.0:80:<port>` without it. Keeping the two apart is what lets nginx sit in between without any Dockerfile knowing it exists — and, without nginx, Docker's own port mapping still handles the privileged bind, so port 80 works with no root and no proxy.
 - **Network flakiness is retried, not treated as fatal.** Deploying many different projects means hitting more transient apt/pip/CRAN mirror hiccups over time, so several layers retry before giving up: `apt_retry.sh` (shared by all 4 Dockerfiles) wraps every `apt-get install` with up to 3 attempts (10s backoff), `install_deps.R` retries `renv::restore()`/`install.packages()` up to 3 times (checking what's actually still missing afterward, since neither throws an R error on partial failure), and `build_and_run.sh` itself retries a failed `docker build` up to 3 times (10s backoff) in case the flakiness happens outside those inner retry windows (e.g. pulling `BASE_IMAGE`).
 - **Some Jetstream2 instances block outbound port 80**, which breaks apt entirely (not just flakily) since Ubuntu/Debian's default sources are `http://` mirrors — no amount of retrying fixes a blocked port. `apt_retry.sh` rewrites `/etc/apt/sources.list` and any `/etc/apt/sources.list.d/*.list`/`*.sources` files from `http://` to `https://` before each install attempt, so builds work regardless of the instance's egress rules for port 80. If you hit `Connection failed` / connection timeouts during an apt step, you can confirm this is the cause by running `curl -v http://archive.ubuntu.com/ubuntu/ --max-time 10` vs the same with `https://` on the instance directly — if only the `https://` one succeeds, this is why.
-- **A post-run smoke test catches startup crashes a successful build can't see.** A clean `docker build` + `docker run -d` only proves the image is valid and the container started — not that the app process inside stayed up. After starting the container, `build_and_run.sh` polls `http://localhost:80/` for up to 60s; if the app never responds (e.g. a missing dependency or a bad entry point killed it seconds after startup), it prints the last 50 lines of `docker logs` and exits non-zero instead of reporting success. Requires `curl` on the host — if it's missing, the smoke test is skipped with a warning rather than treated as a hard dependency.
+- **A post-run smoke test catches startup crashes a successful build can't see.** A clean `docker build` + `docker run -d` only proves the image is valid and the container started — not that the app process inside stayed up. After starting the container, `build_and_run.sh` polls the app **directly** — on whichever host port it actually published, bypassing nginx — for up to `HEALTH_START_PERIOD` (300s, the same window the Docker health check gets; see [Container health checks and autoheal](#container-health-checks-and-autoheal)). If the app never responds (e.g. a missing dependency or a bad entry point killed it seconds after startup), it prints the last 50 lines of `docker logs` and exits non-zero instead of reporting success. The long window doesn't make a genuine crash slower to report: the loop watches the container's restart count and bails as soon as it rises. Requires `curl` on the host — if it's missing, the smoke test is skipped with a warning rather than treated as a hard dependency.
   - **It's a liveness check, not a correctness check.** It cannot catch an error *inside* an app that still serves HTTP: Streamlit and Shiny both catch script-level exceptions and render them in the browser, so a dashboard that throws on a missing data file returns 200 and is reported as deployed — accurately, since it *is* reachable; it just shows a traceback to whoever opens it. Always load the page once after a deploy. The smoke test's job is to stop you from walking away from a container that died on startup, not to verify the dashboard works.
 - **Python builds are NOT pinned to `linux/amd64`, which matters when testing on an Apple Silicon Mac.** They build natively on whatever the host is, and pip resolves wheels per-architecture — so a local build can succeed or fail differently from Jetstream2. A real example: `pandas==0.24.2` has x86_64 wheels but no arm64 ones, so it installs instantly on the instance and tries (and fails) to compile from source on an ARM laptop. Native builds are kept as the default because they're much faster and modern packages behave identically on both; set `BUILD_PLATFORM=linux/amd64` when you specifically need to reproduce what the instance will do.
 - **R Shiny builds are pinned to `linux/amd64` on non-amd64 hosts.** Posit publishes Shiny Server as an amd64-only `.deb`, so `Dockerfile.r-shiny` can't build natively on arm64 — on an Apple Silicon Mac, `gdebi` refuses the package several minutes into the build with an error that never mentions architecture. `resolve_build_platform()` (in [`common.sh`](../deploy/lib/common.sh)) detects a non-amd64 Docker host and adds `--platform linux/amd64`, which builds correctly under emulation, just slowly. Jetstream2 instances are x86_64 so this never applies in production — it exists so a change can actually be smoke-tested locally before deploying. Set `BUILD_PLATFORM` to override. The 3 Python frameworks build natively on either architecture and are unaffected.
@@ -224,9 +236,9 @@ All optional; each is described in more detail in the relevant section below.
 
 **To update the app after a code change:** re-run `build_and_run.sh`. It rebuilds the image (Docker layer caching keeps this fast unless the system/package layers changed) and replaces the running container.
 
-**To swap in a completely different app on the same instance:** point `build_and_run.sh` at the new project instead — e.g. `./deploy/build_and_run.sh /path/to/other-project [image-name]`. The default image/container name is `dashboard-app` when you don't pass one, but you don't need to keep it consistent across deploys: `run_container()` in `common.sh` runs `docker rm -f <container-name>` for the new name, then also removes *any other* container currently bound to host port 80 (`docker ps -aq --filter "publish=80"`), regardless of its name. This cleanly stops and removes whatever's currently running — no manual cleanup needed — and the old image tag just gets overwritten rather than accumulating on disk.
+**To swap in a completely different app on the same instance:** point `build_and_run.sh` at the new project instead — e.g. `./deploy/build_and_run.sh /path/to/other-project [image-name]`. The default image/container name is `dashboard-app` when you don't pass one, but you don't need to keep it consistent across deploys: `run_container()` in `common.sh` runs `docker rm -f <container-name>` for the new name, then also removes *any other* container currently bound to the host ports this tool uses — **both** port 80 and the configured `APP_HOST_PORT` — regardless of its name. Both, because adopting nginx moves the app to a loopback port while the container from the previous direct deploy is still sitting on 80, where it would block nginx from ever binding. The lookup reads each container's `.HostConfig.PortBindings` rather than using `docker ps --filter publish=`, whose meaning isn't reliably the *host* port across Docker versions — too narrow and a stale container keeps the port; too broad and `docker rm -f` could destroy an unrelated container, which on a desktop instance can be the Guacamole server the researcher is connected through. This cleanly stops and removes whatever's currently running — no manual cleanup needed — and the old image tag just gets overwritten rather than accumulating on disk.
 
-This tool is scoped to one app at a time per instance (see "Assumes one instance per project/researcher" at the top of this doc) — it doesn't support two apps running simultaneously: every container binds host port 80, so the port-based cleanup above is what prevents a differently-named second deploy from failing with "port is already allocated" or leaving the old container squatting on port 80. If you want two dashboards reachable at once, provision a second Jetstream2 instance rather than trying to run both here.
+This tool is scoped to one app at a time per instance (see "Assumes one instance per project/researcher" at the top of this doc) — it doesn't support two apps running simultaneously: every container binds the same host port, so the port-based cleanup above is what prevents a differently-named second deploy from failing with "port is already allocated" or leaving the old container squatting on it. If you want two dashboards reachable at once, provision a second Jetstream2 instance rather than trying to run both here.
 
 **To update data when using `DATA_DIR`:** just update the files at that host path and `docker restart <container-name>` — no rebuild needed, since the data is bind-mounted rather than baked in.
 
@@ -262,6 +274,18 @@ The verdict is one of:
 
 > **`ok` means reachable, not correct.** Shiny and Streamlit catch script-level exceptions and render them *as a page*, answering 200 the whole time. Nothing short of opening the dashboard in a browser tells you it actually works. The same caveat applies to the post-deploy smoke test.
 
+Alongside the verdict it reports the container's state, Docker health, restart count and uptime; its memory and CPU; free space on `/`; whether autoheal is running; and the three HTTP probes the verdict is derived from — the app directly, nginx's own `/_deploy/health`, and the public path. The three probes are the useful part when the verdict alone isn't enough:
+
+```console
+$ ./deploy/manage.sh health
+Verdict:        ok — The dashboard is up and reachable.
+Serving:        nginx on port 80  ->  app on 127.0.0.1:8080
+  app direct    HTTP 200  (http://127.0.0.1:8080/)
+  public path   HTTP 200  (http://127.0.0.1/)
+```
+
+`app direct` non-200 with `public path` non-200 is an app problem; `app direct` 200 with `public path` failing is a proxy problem. `--porcelain` emits every one of these as `key=value` (`verdict`, `app_http`, `public_http`, `nginx_http`, `nginx_service`, `proxy_enabled`, `app_bind`, `autoheal`, `restarts`, `mem_usage`, `cpu_pct`, `root_disk`, `url`, `detail`), which is what the GUI reads — it renders `verdict` through a lookup table and never parses the prose.
+
 ### Container health checks and autoheal
 
 Every container `build_and_run.sh` starts gets a Docker health check — an HTTP GET of `/` on the framework's own port, supplied at run time rather than baked into the Dockerfiles (the port is only known at deploy time, and three of the four base images ship neither `curl` nor `wget`).
@@ -276,34 +300,102 @@ The post-deploy smoke test uses the same window, for the same reason: a flat 60s
 
 ---
 
-## Managing the deployed container
+## Command reference
 
-These are plain `docker` commands — no wrapper script needed. Examples below assume the default image/container name `dashboard-app`; substitute your own if you passed `[image-name]` to `build_and_run.sh`.
+Everything below assumes the default image/container name `dashboard-app`; substitute your own if you passed `[image-name]` to `build_and_run.sh`. Run these from the repo root.
+
+### The deployed dashboard
+
+[`manage.sh`](../deploy/manage.sh) is a thin wrapper over `docker` — it exists so the GUI doesn't have to hardcode the container name, the host port and its own copy of the public-IP lookup. The plain `docker` equivalents still work and are listed alongside.
+
+| Command | What it does |
+|---|---|
+| `./deploy/manage.sh status` | Is it deployed, running, and answering? Plus the URL. |
+| `./deploy/manage.sh health` | *Which layer* is broken — see [Health and diagnosis](#health-and-diagnosis). Start here when the page won't load. |
+| `./deploy/manage.sh url` | Print the public URL (fails if the dashboard isn't running). |
+| `./deploy/manage.sh logs [N]` | Last N lines (default 200) of the app's own log, stdout **and** stderr. |
+| `./deploy/manage.sh restart` | Restart the container without rebuilding. |
+| `./deploy/manage.sh stop` | Stop it, and say plainly that it stays stopped across reboots. |
+| `./deploy/manage.sh disk` | Free space, what Docker is using, and how much of it is reclaimable. |
+| `./deploy/manage.sh cleanup` | Reclaim it — see [Reclaiming disk space](#reclaiming-disk-space). |
+| `./deploy/manage.sh report [path]` | Write one diagnostic file to attach when asking for help. |
+
+`status`, `health`, `disk` and `cleanup` all accept `--porcelain` for stable `key=value` output.
+
+`report` bundles the health verdict, the disk figures, `docker ps -a`, the proxy state file, nginx's recent error log and the last 200 lines of the app's own log into a single timestamped file under `~/dashboard-deploy-logs/`. It collects nothing a researcher couldn't read themselves in the GUI — it exists because the alternative is asking someone on a remote desktop to run six commands and paste the output back.
 
 ```bash
-# Check what's running
-docker ps
-
-# View app logs (add -f to follow / tail live)
-docker logs dashboard-app
-docker logs -f dashboard-app
-
-# Stop / start / restart the running container
-docker stop dashboard-app
-docker start dashboard-app
-docker restart dashboard-app
-
-# Remove the container (re-running build_and_run.sh does this for you automatically)
-docker rm -f dashboard-app
+# The same things by hand
+docker ps                                  # what's running
+docker ps -a                               # ...including stopped containers
+docker logs dashboard-app                   # app logs
+docker logs -f --tail 100 dashboard-app     # follow live
+docker stats --no-stream dashboard-app      # memory / CPU right now
+docker restart dashboard-app                # restart (also: stop / start)
+docker rm -f dashboard-app                  # remove (build_and_run.sh does this for you)
+docker exec -it dashboard-app bash          # shell inside the container
 ```
 
-### Cleaning up unused images and disk space
+Two things worth knowing. `manage.sh logs` redirects stderr into stdout deliberately: gunicorn, Shiny Server and Streamlit all log to **stderr**, so anything capturing stdout alone gets an empty log and looks broken. And `docker stop` persists — `--restart unless-stopped` means a manually stopped container stays down across a reboot until you `docker start` it.
 
-Every rebuild leaves the previous image's now-untagged layers behind, and Docker's build cache grows over time — on a small Jetstream2 volume this can fill the disk. A few ways to reclaim space:
+### The host and the proxy
 
 ```bash
+sudo ./deploy/bootstrap.sh --check      # read-only snapshot: docker, nginx, swap, disk,
+                                        # proxy state, listening sockets, then manage.sh health
+
+# Is the app exposed to the internet, or only reachable through nginx?
+sudo ss -tlnp | grep -E ':80|:8080'
+# Expect nginx on 0.0.0.0:80 and docker-proxy on 127.0.0.1:8080 ONLY.
+# Anything on 0.0.0.0:8080 means the app server is facing the internet directly.
+
+# What the tooling thinks the topology is
+cat /etc/dashboard-deploy/proxy.env
+
+# nginx
+sudo nginx -t                           # validate config before touching anything
+sudo systemctl reload nginx             # apply a config change with no dropped connections
+sudo systemctl restart nginx            # full restart
+systemctl status nginx
+sudo tail -f /var/log/nginx/dashboard.error.log    # proxy-side errors
+sudo tail -f /var/log/nginx/dashboard.access.log   # who is hitting it
+curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1/_deploy/health   # nginx alone, app not involved
+
+# The autoheal sidecar (restarts a container Docker has marked unhealthy)
+docker logs dashboard-autoheal
+docker inspect -f '{{.State.Health.Status}}' dashboard-app   # what autoheal is reacting to
+
+# Certificates, when a DNS name is configured
+sudo certbot certificates
+sudo certbot renew --dry-run
+```
+
+Never edit `/etc/nginx/sites-available/dashboard` directly — bootstrap re-renders it from [`deploy/nginx/dashboard.conf.template`](../deploy/nginx/dashboard.conf.template) on every run. Change the template or `deploy/deploy.env`, then re-run bootstrap.
+
+### Reclaiming disk space
+
+Every rebuild leaves the previous image's now-untagged layers behind, and Docker's build cache grows over time — on a small Jetstream2 volume this can fill the disk.
+
+The safe subset of the commands below is wrapped up as two verbs, which is also what the desktop application's **Free up space** button runs:
+
+```bash
+./deploy/manage.sh disk       # where the space has gone, and how much is reclaimable
+./deploy/manage.sh cleanup    # reclaim it
+```
+
+`cleanup` runs `docker image prune -f` (dangling layers only) and `docker builder prune -f` (the build cache). It deliberately does **not** use the `-a` variants or `docker container prune`: `-a` would remove the tagged dashboard image and the autoheal sidecar's image, turning "free up space" into "the next publish is a full rebuild and autoheal has to be re-pulled", and `container prune` would delete a *stopped* dashboard container — which is exactly the state someone is in right after pressing Stop, expecting to start it again. The threshold behind the low-disk warning lives in [`deploy/lib/disk.sh`](../deploy/lib/disk.sh) (`LOW_DISK_GB`), shared with `bootstrap.sh` so the figure warned about at provision time and the one the GUI shows later cannot drift apart.
+
+For anything more aggressive, the underlying commands:
+
+```bash
+# How much is free on / — bootstrap warns below 15GB
+df -h /
+
 # See how much space Docker is using, broken down by category
 docker system df
+
+# Which images are the largest, newest first
+docker images --format '{{.Size}}\t{{.Repository}}:{{.Tag}}\t{{.CreatedSince}}'
 
 # Remove dangling images (untagged layers left over from rebuilds) — safe, does not touch running containers
 docker image prune
@@ -321,7 +413,9 @@ docker system prune
 docker system prune -a
 ```
 
-`docker image prune -a` / `docker system prune -a` are generally safe here since this tool only ever runs one app at a time (see "Assumes one instance per project/researcher" above), but double-check `docker ps -a` first if you have other unrelated containers/images on the same instance.
+`docker image prune -a` / `docker system prune -a` are generally safe here since this tool only ever runs one app at a time (see "Assumes one instance per project/researcher" above), but double-check `docker ps -a` first if you have other unrelated containers/images on the same instance. Two specific cautions on a researcher instance: **the autoheal sidecar is a running container**, so `prune -a` leaves it alone — but stop-and-prune sequences can catch it, and `sudo ./deploy/bootstrap.sh` puts it back. And the stale `dashboard-app` image is usually the single largest item and is safe to remove, at the cost of a full (not layer-cached) rebuild on the next publish.
+
+A pruned build cache costs build time, not correctness. If disk is tight during a build specifically, `docker builder prune -f` is the one to reach for first — it's the item that grows without bound across rebuilds.
 
 ---
 
@@ -422,7 +516,14 @@ Four tabs, read left to right:
 1. **Your app** — point it at a folder already on the server, clone a Git address, or unpack a `.zip`. It immediately reports the framework it detected and the entry point it found.
 2. **Your data** — choose where your data lives (attached storage volumes are listed first, with free space), pick a transfer route, and verify what arrived. It always shows the host-path → container-path mapping, which is the detail people most often get wrong.
 3. **Publish** — a plain-English readiness summary, then the build with live output. The button stays disabled until the project is actually deployable.
-4. **Manage** — status and URL, the app's own logs, restart, stop, and republish.
+4. **Manage** — a live status panel, storage, the app's own logs, and the buttons: open, restart/start, stop, republish.
+
+The Manage tab is the monitoring half of this tool, and everything on it comes from `manage.sh`:
+
+- **It keeps checking on its own**, every 30 seconds, so a dashboard that recovers (or stops responding) is visible without pressing anything. The poll is skipped whenever the tab isn't the one on screen — those probes cost real time against a wedged app, and there's no reason to spend it on a tab nobody is looking at. Turn it off with **Keep checking automatically**; the timestamp beside it says when the reading is from.
+- **The verdict is in plain language**, translated from `manage.sh health`'s enum through a lookup table (`HEALTH_HEADLINES` in `backend.py`) rather than by parsing prose, with the raw HTTP codes still shown underneath — those are the single most useful thing to quote when asking for help.
+- **Storage is shown with the action next to it.** Free space, the size of the dashboard's own image, and how much is reclaimable; below `LOW_DISK_GB` it says what a shortage will actually cost (a build that fails partway with a confusing error) rather than just printing a number. **Free up space** runs `manage.sh cleanup` on a worker thread — see [Reclaiming disk space](#reclaiming-disk-space) for exactly what that does and doesn't remove.
+- **Save a report to send for help** writes the `manage.sh report` bundle and offers to open the folder. **Save to a file…** does the same for the app's log alone.
 
 Three behaviours worth knowing about:
 

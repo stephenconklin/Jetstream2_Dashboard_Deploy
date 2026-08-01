@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 import tkinter as tk
 from dataclasses import dataclass, field
 from tkinter import filedialog, messagebox, ttk
@@ -753,12 +754,20 @@ class DeployTab(ttk.Frame):
 # Tab 4 — manage
 # --------------------------------------------------------------------------
 class ManageTab(ttk.Frame):
+    # How often the tab re-checks itself while the researcher is looking at
+    # it. Slow enough that the probes never queue up behind each other (a
+    # wedged app makes each health check wait out its own timeouts), fast
+    # enough that "it just came back" is visible without pressing anything.
+    AUTO_REFRESH_MS = 30_000
+
     def __init__(self, parent, shared: Shared, deploy_tab: DeployTab) -> None:
         super().__init__(parent, padding=PAD)
         self.shared = shared
         self.deploy_tab = deploy_tab
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(3, weight=1)
+        # Row 5 is the log box — the only thing that should absorb extra
+        # height when the window is resized.
+        self.rowconfigure(5, weight=1)
 
         self.status = tk.StringVar(value="Checking…")
         ttk.Label(self, textvariable=self.status, wraplength=680,
@@ -770,16 +779,37 @@ class ManageTab(ttk.Frame):
         self.open_btn = ttk.Button(row, text="Open dashboard", command=self._open)
         self.open_btn.grid(row=0, column=0)
         ttk.Button(row, text="Refresh", command=self.refresh).grid(row=0, column=1, padx=PAD)
-        ttk.Button(row, text="Restart", command=lambda: self._do("restart")).grid(row=0, column=2)
+        # Label switches to "Start" when the container is stopped: `docker
+        # restart` starts a stopped container perfectly well, but a button
+        # offering to "restart" something a researcher just stopped reads as
+        # though it will do nothing.
+        self.restart_label = tk.StringVar(value="Restart")
+        self.restart_btn = ttk.Button(row, textvariable=self.restart_label,
+                                      command=lambda: self._do("restart"))
+        self.restart_btn.grid(row=0, column=2)
         ttk.Button(row, text="Stop", command=lambda: self._do("stop")).grid(row=0, column=3, padx=PAD)
         ttk.Button(row, text="Publish again", command=self._redeploy).grid(row=0, column=4)
+
+        # Second row: the things that are occasionally needed rather than
+        # routinely, kept off the primary row so it stays readable.
+        row2 = ttk.Frame(self)
+        row2.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        self.auto_refresh = tk.BooleanVar(value=True)
+        ttk.Checkbutton(row2, text="Keep checking automatically",
+                        variable=self.auto_refresh,
+                        command=self._auto_toggled).grid(row=0, column=0)
+        ttk.Button(row2, text="Save a report to send for help",
+                   command=self._save_report).grid(row=0, column=1, padx=PAD)
+        self.checked_at = tk.StringVar(value="")
+        ttk.Label(row2, textvariable=self.checked_at,
+                  foreground="#666").grid(row=0, column=2, sticky="w")
 
         # The detail behind the headline. Collapsed into a plain grid of
         # label/value pairs rather than a table widget: there are only a
         # handful of facts, and they are the ones to read out over email when
         # asking for help.
         detail_box = ttk.LabelFrame(self, text="Details", padding=PAD)
-        detail_box.grid(row=2, column=0, sticky="ew", pady=(PAD, 0))
+        detail_box.grid(row=3, column=0, sticky="ew", pady=(PAD, 0))
         detail_box.columnconfigure(1, weight=1)
         self._detail_vars: dict[str, tk.StringVar] = {}
         for i, (key, caption) in enumerate(self.DETAIL_ROWS):
@@ -789,8 +819,21 @@ class ManageTab(ttk.Frame):
             ttk.Label(detail_box, textvariable=var, font=("TkFixedFont", 9)).grid(
                 row=i, column=1, sticky="w")
 
+        # Storage. Its own box rather than another Details row because it is
+        # the one fact here that a researcher can act on directly, and the
+        # action belongs next to the number.
+        disk_box = ttk.LabelFrame(self, text="Storage", padding=PAD)
+        disk_box.grid(row=4, column=0, sticky="ew", pady=(PAD, 0))
+        disk_box.columnconfigure(0, weight=1)
+        self.disk_summary = tk.StringVar(value="Checking…")
+        ttk.Label(disk_box, textvariable=self.disk_summary, wraplength=560,
+                  justify="left").grid(row=0, column=0, sticky="w")
+        self.cleanup_btn = ttk.Button(disk_box, text="Free up space",
+                                      command=self._cleanup)
+        self.cleanup_btn.grid(row=0, column=1, sticky="e", padx=(PAD, 0))
+
         log_box = ttk.LabelFrame(self, text="Recent output from your app", padding=PAD)
-        log_box.grid(row=3, column=0, sticky="nsew", pady=(PAD, 0))
+        log_box.grid(row=5, column=0, sticky="nsew", pady=(PAD, 0))
         log_box.columnconfigure(0, weight=1)
         log_box.rowconfigure(0, weight=1)
         self.logs = tk.Text(log_box, height=12, wrap="none", state="disabled",
@@ -799,13 +842,21 @@ class ManageTab(ttk.Frame):
         bar = ttk.Scrollbar(log_box, orient="vertical", command=self.logs.yview)
         bar.grid(row=0, column=1, sticky="ns")
         self.logs.configure(yscrollcommand=bar.set)
-        ttk.Button(log_box, text="Show latest", command=self._show_logs).grid(
-            row=1, column=0, sticky="w", pady=(PAD, 0))
+        log_buttons = ttk.Frame(log_box)
+        log_buttons.grid(row=1, column=0, sticky="w", pady=(PAD, 0))
+        ttk.Button(log_buttons, text="Show latest", command=self._show_logs).grid(row=0, column=0)
+        ttk.Button(log_buttons, text="Save to a file…", command=self._save_logs).grid(
+            row=0, column=1, padx=PAD)
 
         self.url = ""
-        self._health_queue: queue.Queue[dict[str, str]] = queue.Queue()
+        # One queue carrying both probes: they are gathered by a single worker
+        # so the tab can never render a health verdict and a disk figure taken
+        # at meaningfully different times.
+        self._health_queue: queue.Queue[dict] = queue.Queue()
         self._health_pending = False
+        self._auto_job: str | None = None
         self.refresh()
+        self._schedule_auto()
 
     # Porcelain key -> caption. Ordered as someone would read down them when
     # working out what is wrong: what is running, then how it is served, then
@@ -821,39 +872,83 @@ class ManageTab(ttk.Frame):
         ("root_disk", "Disk"),
     )
 
-    def refresh(self) -> None:
-        """Kick off a health check on a worker thread.
+    def refresh(self, quiet: bool = False) -> None:
+        """Kick off a health and storage check on a worker thread.
 
         Not run inline: ``manage.sh health`` makes several HTTP probes and
         samples ``docker stats``, and each probe waits out its own timeout
         when something is wedged — which is exactly when a researcher presses
         Refresh. Inline, that would freeze the window for the better part of a
         minute and look like the GUI itself had hung.
+
+        ``quiet`` is for the automatic poll: it leaves the previous reading on
+        screen instead of blanking it to "Checking…" every 30 seconds, which
+        otherwise makes a perfectly healthy dashboard look like it is
+        constantly being re-diagnosed.
         """
         if self._health_pending:
             return
         self._health_pending = True
-        self.status.set("Checking…")
+        if not quiet:
+            self.status.set("Checking…")
 
         def work() -> None:
+            payload: dict = {}
             try:
-                result = backend.health()
+                payload["health"] = backend.health()
             except Exception as exc:      # never let a worker thread die silently
-                result = {"verdict": "", "detail": str(exc)}
-            self._health_queue.put(result)
+                payload["health"] = {"verdict": "", "detail": str(exc)}
+            try:
+                payload["disk"] = backend.disk()
+            except Exception:
+                # Storage is secondary. A failure here must not cost the
+                # researcher the health verdict, which is the reason they
+                # opened this tab.
+                payload["disk"] = {}
+            self._health_queue.put(payload)
 
         threading.Thread(target=work, daemon=True).start()
         self.after(150, self._drain_health)
 
+    def _schedule_auto(self) -> None:
+        """Queue the next automatic poll, replacing any already queued."""
+        if self._auto_job is not None:
+            self.after_cancel(self._auto_job)
+        self._auto_job = self.after(self.AUTO_REFRESH_MS, self._auto_tick)
+
+    def _auto_tick(self) -> None:
+        """The periodic check.
+
+        Skipped entirely when this tab isn't the one on screen: the probes
+        cost a second or two of a wedged app's timeouts, and there is no
+        reason to spend that on a tab nobody is looking at. The timer keeps
+        running either way, so switching back to this tab shows a current
+        reading within one interval.
+        """
+        if self.auto_refresh.get() and self.winfo_ismapped():
+            self.refresh(quiet=True)
+        self._schedule_auto()
+
+    def _auto_toggled(self) -> None:
+        if self.auto_refresh.get():
+            self.refresh(quiet=True)
+            self._schedule_auto()
+        elif self._auto_job is not None:
+            self.after_cancel(self._auto_job)
+            self._auto_job = None
+
     def _drain_health(self) -> None:
-        """Apply a finished health check. UI thread only — see runner.py."""
+        """Apply a finished check. UI thread only — see runner.py."""
         try:
-            health = self._health_queue.get_nowait()
+            payload = self._health_queue.get_nowait()
         except queue.Empty:
             self.after(150, self._drain_health)
             return
 
         self._health_pending = False
+        health = payload.get("health") or {}
+        self._apply_disk(payload.get("disk") or {})
+        self.checked_at.set(f"checked {time.strftime('%H:%M:%S')}")
         if not health:
             # manage.sh unavailable or it failed outright. Fall back to the
             # simpler status call rather than showing nothing.
@@ -896,7 +991,131 @@ class ManageTab(ttk.Frame):
         for key, var in self._detail_vars.items():
             var.set(values.get(key) or "—")
 
+        self.restart_label.set(
+            "Start" if health.get("state") in ("exited", "created", "paused") else "Restart")
         self.open_btn.configure(state="normal" if self.url else "disabled")
+
+    def _apply_disk(self, disk: dict[str, str]) -> None:
+        """Render the storage line. UI thread only.
+
+        The wording is the point of this panel. "9GB free" means nothing to
+        someone who has never watched a build run out of it, so a low reading
+        says what it will cost them and what to press.
+        """
+        if not disk:
+            self.disk_summary.set("Storage information isn't available.")
+            self.cleanup_btn.configure(state="disabled")
+            return
+
+        summary = disk.get("root_summary") or "unknown"
+        reclaimable = disk.get("cache_reclaimable") or ""
+        images_reclaimable = disk.get("images_reclaimable") or ""
+        app_size = disk.get("app_image_size") or ""
+
+        line = f"Disk: {summary}."
+        if app_size:
+            line += f"  Your dashboard's image is {app_size}."
+        if reclaimable or images_reclaimable:
+            line += (f"\nCan be freed up: {images_reclaimable or '0B'} of old layers, "
+                     f"{reclaimable or '0B'} of build cache.")
+
+        if disk.get("low_disk") == "1":
+            threshold = disk.get("low_disk_threshold_gb", "15")
+            line += (f"\n\nThis is tight — a large build wants more than {threshold}GB and "
+                     "can fail partway through with a confusing error. Freeing up space "
+                     "now is worthwhile.")
+        self.disk_summary.set(line)
+        self.cleanup_btn.configure(state="normal")
+
+    def _cleanup(self) -> None:
+        """Reclaim disk space, on a worker thread with the button disabled.
+
+        Pruning a large build cache is disk-bound and can take minutes, so
+        this cannot run inline. The confirmation spells out the one real
+        consequence — a slower next publish — rather than asking a researcher
+        to reason about what a dangling layer is.
+        """
+        if not messagebox.askyesno(
+                "Free up space?",
+                "This removes leftover pieces of previous builds and the build "
+                "cache.\n\nYour dashboard keeps running and is not affected. The "
+                "next time you publish will be slower, because those pieces have "
+                "to be rebuilt.\n\nContinue?"):
+            return
+
+        self.cleanup_btn.configure(state="disabled")
+        self.disk_summary.set("Freeing up space… this can take a few minutes.")
+        result_queue: queue.Queue[dict] = queue.Queue()
+
+        def work() -> None:
+            try:
+                result_queue.put({"ok": backend.cleanup()})
+            except backend.BackendError as exc:
+                result_queue.put({"error": exc.full_text()})
+            except Exception as exc:
+                result_queue.put({"error": str(exc)})
+
+        threading.Thread(target=work, daemon=True).start()
+
+        def drain() -> None:
+            try:
+                outcome = result_queue.get_nowait()
+            except queue.Empty:
+                self.after(200, drain)
+                return
+            self.cleanup_btn.configure(state="normal")
+            if "error" in outcome:
+                messagebox.showerror("That didn't work", outcome["error"])
+            else:
+                freed = outcome["ok"].get("freed_gb", "")
+                summary = outcome["ok"].get("root_summary", "")
+                if freed and freed != "0":
+                    messagebox.showinfo(
+                        "Space freed",
+                        f"Reclaimed about {freed}GB.\n\nThe disk is now {summary}.")
+                else:
+                    messagebox.showinfo(
+                        "Nothing left to free",
+                        "There was nothing significant to clean up.\n\n"
+                        f"The disk is {summary}.")
+            self.refresh()
+
+        self.after(200, drain)
+
+    def _save_report(self) -> None:
+        """Write the diagnostic report and show where it went."""
+        try:
+            path = backend.save_report()
+        except backend.BackendError as exc:
+            messagebox.showerror("That didn't work", exc.full_text())
+            return
+        if messagebox.askyesno(
+                "Report saved",
+                f"Saved to:\n{path}\n\nAttach this file to an email when asking "
+                "for help — it has your dashboard's status, recent output, and "
+                "how much space is left.\n\nOpen the folder now?"):
+            backend.open_folder(str(path.parent))
+
+    def _save_logs(self) -> None:
+        """Write the app's recent output to a file the researcher chooses."""
+        try:
+            out = backend.manage("logs")
+        except backend.BackendError as exc:
+            messagebox.showerror("That didn't work", exc.full_text())
+            return
+        path = filedialog.asksaveasfilename(
+            title="Save your app's output",
+            defaultextension=".txt",
+            initialfile=f"dashboard-log-{time.strftime('%Y%m%d-%H%M%S')}.txt")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(out)
+        except OSError as exc:
+            messagebox.showerror("Could not save", str(exc))
+            return
+        messagebox.showinfo("Saved", f"Your app's output was saved to:\n{path}")
 
     def _apply_status_fallback(self) -> None:
         """The pre-health display, for when manage.sh health isn't usable."""
@@ -917,6 +1136,8 @@ class ManageTab(ttk.Frame):
             self.status.set(
                 f"The dashboard is stopped ({state}). It will stay stopped, "
                 "including after a reboot, until you publish again.")
+        self.restart_label.set(
+            "Start" if state in ("exited", "created", "paused") else "Restart")
         self.open_btn.configure(state="normal" if self.url else "disabled")
 
     def _open(self) -> None:

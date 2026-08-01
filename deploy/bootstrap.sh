@@ -47,6 +47,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # For PROXY_ENV_FILE and AUTOHEAL_CONTAINER. Sourced rather than restated so
 # the path bootstrap WRITES and the path build_and_run.sh READS cannot drift.
 source "$SCRIPT_DIR/lib/proxy.sh"
+# For LOW_DISK_GB and the free-space helpers, shared with manage.sh so the
+# threshold warned about here and the one the GUI reports are the same number.
+source "$SCRIPT_DIR/lib/disk.sh"
 
 MODE="full"
 ASSUME_YES=0
@@ -289,17 +292,17 @@ step "Disk space"
 # An unparseable answer means `df` did not support these flags, not that the
 # disk is full. Say nothing rather than warn about "0GB free", which would be
 # alarming and wrong.
-FREE_GB="$(df -BG --output=avail / 2>/dev/null | tail -1 | tr -dc '0-9')"
+FREE_GB="$(disk_free_gb)"
 if [[ -z "$FREE_GB" ]]; then
   skip "could not read free space on /"
-elif [[ "$FREE_GB" -lt 15 ]]; then
+elif [[ "$FREE_GB" -lt "$LOW_DISK_GB" ]]; then
   warn "only ${FREE_GB}GB free on / — an R geospatial build can want more than that.
          Reclaim space before publishing if a build fails partway:
-           docker system df           # see where it has gone
-           docker image prune -f      # dangling layers; safe, touches nothing running
-           docker builder prune -f    # build cache; costs a slower next build
-         A stale dashboard image is often the largest single item, and is safe
-         to remove because the next publish rebuilds it."
+           ./deploy/manage.sh disk      # see where it has gone
+           ./deploy/manage.sh cleanup   # remove leftover layers and the build cache
+         Both are also in the desktop application's Manage tab. A stale dashboard
+         image is often the largest single item, and is safe to remove because
+         the next publish rebuilds it."
 else
   ok "${FREE_GB}GB free on /"
 fi
