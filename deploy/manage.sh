@@ -62,6 +62,14 @@ container_responding() {
   curl -fsS -o /dev/null --max-time 5 "$(app_direct_url)" 2>/dev/null
 }
 
+# One `dashboard.*` provenance label off the container, or "" when the label
+# isn't there — which is the case for anything deployed before run_container()
+# started writing them. An absent label is a fact to report, not an error: the
+# GUI simply doesn't restore what it can't learn.
+container_label() {
+  docker_field "" -f "{{index .Config.Labels \"dashboard.$1\"}}" "$CONTAINER_NAME"
+}
+
 cmd_status() {
   local porcelain=0
   [[ "${1:-}" == "--porcelain" ]] && porcelain=1
@@ -75,6 +83,11 @@ cmd_status() {
       echo "health=unknown"
       echo "url="
       echo "created="
+      echo "project_dir="
+      echo "project_dir_exists=0"
+      echo "data_dir="
+      echo "framework="
+      echo "deployed_at="
     else
       echo "No dashboard is deployed yet (no container named '$CONTAINER_NAME')."
     fi
@@ -93,17 +106,51 @@ cmd_status() {
   url=""
   [[ "$health" == "responding" ]] && url="$(public_url)"
 
+  # Where this deployment came from. Written as labels by run_container(); see
+  # the comment there for why the container rather than a state file.
+  local project_dir data_dir framework deployed_at project_exists
+  project_dir="$(container_label project_dir)"
+  data_dir="$(container_label data_dir)"
+  framework="$(container_label framework)"
+  deployed_at="$(container_label deployed_at)"
+  # Reported separately because the folder can be renamed, moved or deleted
+  # after a deploy while the container carries on serving perfectly well from
+  # the image. A caller offering to re-publish from that path needs to know.
+  project_exists=0
+  [[ -n "$project_dir" && -d "$project_dir" ]] && project_exists=1
+
   if [[ "$porcelain" -eq 1 ]]; then
     echo "container=$CONTAINER_NAME"
     echo "state=$state"
     echo "health=$health"
     echo "url=$url"
     echo "created=$created"
+    echo "project_dir=$project_dir"
+    echo "project_dir_exists=$project_exists"
+    echo "data_dir=$data_dir"
+    echo "framework=$framework"
+    echo "deployed_at=$deployed_at"
   else
     echo "Container: $CONTAINER_NAME"
     echo "State:     $state"
     echo "Health:    $health"
-    [[ -n "$url" ]] && echo "URL:       $url"
+    # `if`, not `[[ … ]] && echo`: under `set -e` a failed test as the last
+    # command of a function makes the whole script exit non-zero, and one in
+    # the middle of a block stops the rest of the output entirely.
+    if [[ -n "$url" ]]; then
+      echo "URL:       $url"
+    fi
+    if [[ -n "$project_dir" ]]; then
+      local missing=""
+      if [[ "$project_exists" -ne 1 ]]; then
+        missing="  (no longer there)"
+      fi
+      echo "Published from:"
+      echo "  project   ${project_dir}${missing}"
+      if [[ -n "$data_dir" ]];    then echo "  data      $data_dir"; fi
+      if [[ -n "$framework" ]];   then echo "  framework $framework"; fi
+      if [[ -n "$deployed_at" ]]; then echo "  published $deployed_at"; fi
+    fi
   fi
 }
 

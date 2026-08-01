@@ -403,6 +403,50 @@ def _porcelain(action: str, timeout: int) -> dict[str, str]:
     return out
 
 
+@dataclass
+class Deployment:
+    """Where the currently running dashboard came from.
+
+    Read back from labels the deploy wrote onto the container itself, via
+    ``manage.sh status``. The container is the source of truth on purpose: it
+    describes what is *actually serving*, so it cannot disagree with reality
+    the way a state file written by whichever tool did the deploy would — and
+    a deploy done from a terminal shows up here exactly like one done from
+    this application.
+
+    Everything is empty for a container deployed before those labels existed,
+    which is a fact to report rather than an error: the GUI simply restores
+    nothing, exactly as it behaved before.
+    """
+
+    project_dir: str = ""
+    project_dir_exists: bool = False
+    data_dir: str = ""
+    framework: str = ""
+    deployed_at: str = ""
+    state: str = "absent"
+
+    @property
+    def can_restore(self) -> bool:
+        """Whether there is a project folder worth reopening the tabs on."""
+        return bool(self.project_dir) and self.project_dir_exists
+
+
+def deployment() -> Deployment:
+    """Provenance of the running dashboard, or an empty Deployment."""
+    st = container_status()
+    if not st or st.get("state", "absent") == "absent":
+        return Deployment()
+    return Deployment(
+        project_dir=st.get("project_dir", ""),
+        project_dir_exists=st.get("project_dir_exists") == "1",
+        data_dir=st.get("data_dir", ""),
+        framework=st.get("framework", ""),
+        deployed_at=st.get("deployed_at", ""),
+        state=st.get("state", "absent"),
+    )
+
+
 def disk() -> dict[str, str]:
     """Free space and what Docker is using, via ``manage.sh disk``.
 

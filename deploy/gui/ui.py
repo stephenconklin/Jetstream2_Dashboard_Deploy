@@ -39,6 +39,27 @@ class Shared:
             fn()
 
 
+def _friendly_time(stamp: str) -> str:
+    """Render the deploy label's UTC timestamp in the instance's local time.
+
+    Falls back to the raw string rather than guessing: the label is written by
+    the shell, and a value this can't parse is more useful shown verbatim than
+    silently dropped.
+    """
+    if not stamp:
+        return ""
+    try:
+        # calendar.timegm, not time.mktime minus time.timezone: the latter
+        # uses the zone's standard offset and so lands an hour out for half
+        # the year, which makes "published at" disagree with the clock the
+        # researcher pressed the button by.
+        import calendar
+        local = time.localtime(calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ")))
+        return time.strftime("%d %b %Y at %H:%M", local)
+    except (ValueError, OverflowError):
+        return stamp
+
+
 def _folder_is_empty(path: str) -> bool:
     """Whether a directory holds no files at any depth.
 
@@ -259,6 +280,44 @@ class AppTab(ttk.Frame):
             messagebox.showerror("This doesn't look like a dashboard yet",
                                  exc.full_text())
             return
+        self._apply(path, info)
+
+    def show_restored(self, path: str, info: backend.ProjectInfo, when: str) -> None:
+        """Reopen on the project the running dashboard was published from.
+
+        Worded as *currently published* rather than *selected*, and explicit
+        that the folder may have moved on since. The container records where
+        it was built from, not a copy of what was in that folder at the time,
+        so the two can genuinely differ — and implying otherwise would be the
+        same class of overclaim as calling a liveness check a success.
+        """
+        self.path_var.set(path)
+        self._apply(path, info)
+        published = f" on {when}" if when else ""
+        self.result.set(
+            f"Currently published: the {info.framework} dashboard in {path}"
+            f"{published}.\nEntry point: {info.entry_point_desc}\n\n"
+            "This is what your instance is serving now. If the code in that "
+            "folder has changed since, publishing again in step 3 picks up "
+            "those changes.")
+
+    def show_missing(self, path: str) -> None:
+        """Explain a published dashboard whose source folder has gone.
+
+        Nothing can be restored in this state, and saying nothing would leave
+        the first three tabs blank while tab 4 reports a perfectly healthy
+        dashboard — which reads as the application having lost track of it.
+        The app itself is fine: the code was baked into the image at build
+        time, so it keeps serving regardless of what happened to the folder.
+        """
+        self.result.set(
+            f"Your dashboard is running, but the folder it was published "
+            f"from is no longer there:\n{path}\n\n"
+            "It keeps running — its code was copied into the image when you "
+            "published. But to publish again you'll need to point step 1 at "
+            "the code's new location, or download it again.")
+
+    def _apply(self, path: str, info: backend.ProjectInfo) -> None:
         self.shared.project_dir = path
         self.shared.info = info
         self.shared.changed()
@@ -432,6 +491,28 @@ class DataTab(ttk.Frame):
                              "\nNote: this is the system disk — fine for trying "
                              "things out, but use a storage volume for real data.")
         self._update_persist()
+
+    def show_restored(self, path: str) -> None:
+        """Reselect the data folder the running dashboard was published with.
+
+        Matched against the discovered locations so the list highlights it and
+        the volume-specific extras (free space, the reboot-persistence offer)
+        behave exactly as they would after picking it by hand. A path that
+        isn't one of those — a plain folder chosen with "Choose another
+        folder…" — is still restored, just without the volume extras.
+        """
+        if not path:
+            return
+        for i, loc in enumerate(self.locations):
+            if loc.path == path:
+                self.loc_list.selection_clear(0, "end")
+                self.loc_list.selection_set(i)
+                self._select(loc)
+                return
+        self.shared.data_dir = path
+        self.shared.changed()
+        self._update_mapping()
+        self._show_route()
 
     def _update_persist(self) -> None:
         """Offer reboot persistence only when it's both possible and needed."""
@@ -1208,3 +1289,61 @@ class MainWindow(ttk.Frame):
         nb.add(self.manage_tab, text="4. Manage")
         self.notebook = nb
         self.shared = shared
+
+        self._restore_queue: queue.Queue[dict] = queue.Queue()
+        self._restore_from_running_dashboard()
+
+    def _restore_from_running_dashboard(self) -> None:
+        """Reopen tabs 1-3 on whatever is currently published, if anything.
+
+        Without this the window comes back blank after every restart, even
+        while a dashboard of the researcher's is serving — so the application
+        appears to have forgotten something the instance plainly still knows.
+
+        Two subprocess calls (``manage.sh status``, then a ``--dry-run`` of the
+        recorded folder), so it runs on a worker thread: at startup on a busy
+        instance those together take long enough to be visible as a frozen
+        window, which is the worst possible first impression.
+
+        Failures here are silent by design. This is a convenience restoring
+        state the researcher can always re-enter by hand, and an error dialog
+        on startup — for a project folder that has since been edited, say —
+        would be alarming out of proportion to what was lost.
+        """
+        def work() -> None:
+            result: dict = {}
+            try:
+                dep = backend.deployment()
+                result["deployment"] = dep
+                if dep.can_restore:
+                    result["info"] = backend.inspect_project(dep.project_dir)
+            except Exception:
+                pass
+            self._restore_queue.put(result)
+
+        threading.Thread(target=work, daemon=True).start()
+        self.after(200, self._drain_restore)
+
+    def _drain_restore(self) -> None:
+        """Apply the restored state. UI thread only — see runner.py."""
+        try:
+            result = self._restore_queue.get_nowait()
+        except queue.Empty:
+            self.after(200, self._drain_restore)
+            return
+
+        dep = result.get("deployment")
+        info = result.get("info")
+        if dep is None:
+            return
+        if dep.project_dir and not dep.project_dir_exists:
+            self.app_tab.show_missing(dep.project_dir)
+            return
+        if info is None:
+            return
+
+        self.app_tab.show_restored(dep.project_dir, info, _friendly_time(dep.deployed_at))
+        # Order matters: the data tab's mapping line needs shared.info, which
+        # the app tab has just set.
+        if dep.data_dir:
+            self.data_tab.show_restored(dep.data_dir)

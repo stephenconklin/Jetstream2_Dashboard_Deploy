@@ -509,9 +509,32 @@ run_container() {
   fi
 
   local data_mount_args=()
+  local data_host_path=""
   if [[ -n "$DATA_DIR" ]]; then
-    data_mount_args=(-v "$(cd "$DATA_DIR" && pwd):$MOUNT_TARGET" -e "DATA_DIR=$MOUNT_TARGET")
+    data_host_path="$(cd "$DATA_DIR" && pwd)"
+    data_mount_args=(-v "$data_host_path:$MOUNT_TARGET" -e "DATA_DIR=$MOUNT_TARGET")
   fi
+
+  # Where this deployment came from, recorded on the container itself.
+  #
+  # The container is the right place for it because it is the only thing that
+  # can't disagree with reality: it describes what is *actually running*, it
+  # survives a reboot and a closed GUI, it is replaced atomically by the next
+  # deploy, and a deploy made from a terminal records itself exactly as one
+  # made from the GUI does. A state file written by whichever tool happened to
+  # perform the deploy would drift from the running container the first time
+  # the other one was used.
+  #
+  # Read back by `manage.sh status`, which is how the GUI restores its first
+  # three tabs after being reopened. Labels are metadata only — nothing about
+  # how the app runs depends on them, so a container deployed before these
+  # existed keeps working and simply reports nothing.
+  local provenance_args=(
+    --label "dashboard.project_dir=$(cd "$PROJECT_DIR" && pwd)"
+    --label "dashboard.data_dir=$data_host_path"
+    --label "dashboard.framework=$FRAMEWORK"
+    --label "dashboard.deployed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  )
 
   # Match the platform the image was built for, or Docker prints a "requested
   # image's platform does not match the detected host platform" warning on
@@ -562,6 +585,7 @@ run_container() {
     --restart unless-stopped \
     -p "$APP_BIND_ADDR:$APP_HOST_PORT:$INTERNAL_PORT" \
     "${health_args[@]+"${health_args[@]}"}" \
+    "${provenance_args[@]+"${provenance_args[@]}"}" \
     "${data_mount_args[@]+"${data_mount_args[@]}"}" \
     "$IMAGE_NAME:latest" >/dev/null
 }

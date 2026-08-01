@@ -310,7 +310,7 @@ Everything below assumes the default image/container name `dashboard-app`; subst
 
 | Command | What it does |
 |---|---|
-| `./deploy/manage.sh status` | Is it deployed, running, and answering? Plus the URL. |
+| `./deploy/manage.sh status` | Is it deployed, running, and answering? Plus the URL, and which project/data folder it was published from. |
 | `./deploy/manage.sh health` | *Which layer* is broken — see [Health and diagnosis](#health-and-diagnosis). Start here when the page won't load. |
 | `./deploy/manage.sh url` | Print the public URL (fails if the dashboard isn't running). |
 | `./deploy/manage.sh logs [N]` | Last N lines (default 200) of the app's own log, stdout **and** stderr. |
@@ -525,7 +525,15 @@ The Manage tab is the monitoring half of this tool, and everything on it comes f
 - **Storage is shown with the action next to it.** Free space, the size of the dashboard's own image, and how much is reclaimable; below `LOW_DISK_GB` it says what a shortage will actually cost (a build that fails partway with a confusing error) rather than just printing a number. **Free up space** runs `manage.sh cleanup` on a worker thread — see [Reclaiming disk space](#reclaiming-disk-space) for exactly what that does and doesn't remove.
 - **Save a report to send for help** writes the `manage.sh report` bundle and offers to open the folder. **Save to a file…** does the same for the app's log alone.
 
-Three behaviours worth knowing about:
+**It reopens on whatever is currently published.** Closing and reopening the window used to lose the project folder and data folder, even while a dashboard of yours was serving — the application appeared to have forgotten something the instance plainly still knew. Every deploy now records where it came from as labels on the container itself (`dashboard.project_dir`, `dashboard.data_dir`, `dashboard.framework`, `dashboard.deployed_at`), which `manage.sh status` reports and the GUI restores tabs 1–3 from at startup.
+
+The container is the source of truth rather than a state file, deliberately: it describes what is *actually serving*, so it cannot drift, it survives reboots, it is replaced atomically by the next deploy, and a deploy done from a terminal shows up in the GUI exactly like one done from the application. Three consequences worth knowing:
+
+- A container deployed **before** this existed carries no labels, so the GUI restores nothing and behaves exactly as it did previously. Re-publishing once fixes it.
+- The labels record where the app was **built from**, not a copy of what was in that folder. Edit the folder afterwards and the two genuinely differ, which is why tab 1 says *currently published* rather than *selected* and spells out that publishing again picks up the changes.
+- If the folder has since been **deleted or moved**, tab 1 says so instead of restoring. The dashboard keeps running regardless — its code was copied into the image at build time.
+
+Three further behaviours worth knowing about:
 
 - **A build survives losing the desktop session.** Builds run detached and write to `~/dashboard-deploy-logs/`; the window only tails that file. If your remote-desktop connection drops mid-build — or you close the window — the build carries on, and reopening the application reattaches to it. Every publish leaves a timestamped log, which is the most useful thing to send if you need help.
 - **It never claims your dashboard is correct.** The post-publish message says the app is *live* and asks you to open it, because the underlying check only proves the app is answering. Shiny and Streamlit render their own errors in the browser and still return HTTP 200 — see the smoke-test note above.
