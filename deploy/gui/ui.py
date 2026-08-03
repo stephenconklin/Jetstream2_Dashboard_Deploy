@@ -24,6 +24,27 @@ import volumes
 
 PAD = 10
 
+# Secondary text: hints, examples, captions. Dark enough to read on Azure
+# light's white, clearly quieter than body text.
+MUTED_FG = "#5c5c5c"
+
+
+def _init_styles() -> None:
+    """Name the few appearance variants this window uses.
+
+    Everything here exists because an inline ``foreground=``/``font=`` option
+    on a widget overrides the active theme outright — so hardcoding them is
+    the one thing in this file that a theme change cannot reach. Naming them
+    instead keeps the whole window's appearance settable from one place.
+
+    Deliberately does not set colours the theme already handles. Called once
+    from MainWindow, which is the only funnel every widget is built through.
+    """
+    style = ttk.Style()
+    style.configure("Muted.TLabel", foreground=MUTED_FG)
+    style.configure("Title.TLabel", font=("TkDefaultFont", 12, "bold"))
+    style.configure("Subtitle.TLabel", font=("TkDefaultFont", 11))
+
 
 @dataclass
 class Shared:
@@ -171,15 +192,27 @@ class ScrollableFrame(ttk.Frame):
 # --------------------------------------------------------------------------
 class AppTab(ttk.Frame):
     def __init__(self, parent, shared: Shared) -> None:
-        super().__init__(parent, padding=PAD)
+        super().__init__(parent)
         self.shared = shared
         self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
 
-        ttk.Label(self, text="Where is your dashboard's code?",
-                  font=("TkDefaultFont", 12, "bold")).grid(row=0, column=0, sticky="w")
+        # A fixed stack of controls with no row that wants extra height, so
+        # it scrolls rather than clipping — same reasoning as DataTab, and
+        # more pressing since the theme pads more than Tk's default did.
+        # Tabs 3 and 4 deliberately do NOT do this: both weight their log
+        # pane to absorb spare height, which a canvas viewport would take
+        # away, freezing the log at its minimum size.
+        self._scroll = ScrollableFrame(self)
+        self._scroll.grid(row=0, column=0, sticky="nsew")
+        body = self._scroll.body
+        body.columnconfigure(0, weight=1)
+
+        ttk.Label(body, text="Where is your dashboard's code?",
+                  style="Title.TLabel").grid(row=0, column=0, sticky="w")
 
         self.choice = tk.StringVar(value="browse")
-        box = ttk.Frame(self)
+        box = ttk.Frame(body)
         box.grid(row=1, column=0, sticky="ew", pady=(PAD, 0))
         box.columnconfigure(0, weight=1)
 
@@ -191,7 +224,7 @@ class AppTab(ttk.Frame):
             ttk.Radiobutton(box, text=label, value=key, variable=self.choice,
                             command=self._switch).grid(row=i, column=0, sticky="w")
 
-        self.panel = ttk.Frame(self)
+        self.panel = ttk.Frame(body)
         self.panel.grid(row=2, column=0, sticky="ew", pady=(PAD, 0))
         self.panel.columnconfigure(1, weight=1)
 
@@ -200,7 +233,7 @@ class AppTab(ttk.Frame):
         self.zip_var = tk.StringVar()
         self.result = tk.StringVar(value="")
 
-        ttk.Label(self, textvariable=self.result, wraplength=680,
+        ttk.Label(body, textvariable=self.result, wraplength=680,
                   justify="left").grid(row=3, column=0, sticky="w", pady=(PAD, 0))
         self._switch()
 
@@ -228,7 +261,7 @@ class AppTab(ttk.Frame):
                 row=0, column=2)
             ttk.Label(self.panel,
                       text="Example:  https://github.com/your-lab/your-dashboard",
-                      foreground="gray40").grid(row=1, column=1, sticky="w", padx=PAD)
+                      style="Muted.TLabel").grid(row=1, column=1, sticky="w", padx=PAD)
         else:
             ttk.Label(self.panel, text="Zip file:").grid(row=0, column=0, sticky="w")
             ttk.Entry(self.panel, textvariable=self.zip_var).grid(
@@ -373,7 +406,7 @@ class DataTab(ttk.Frame):
                    command=self._browse).grid(row=0, column=1, padx=PAD)
 
         self.mapping = tk.StringVar()
-        ttk.Label(dest_box, textvariable=self.mapping, foreground="gray30",
+        ttk.Label(dest_box, textvariable=self.mapping, style="Muted.TLabel",
                   font=("TkFixedFont", 10)).grid(row=2, column=0, sticky="w",
                                                  pady=(PAD, 0))
 
@@ -592,7 +625,7 @@ class DataTab(ttk.Frame):
         ttk.Label(self.route_panel, text=route.blurb, wraplength=680,
                   justify="left").grid(row=0, column=0, sticky="w")
         ttk.Label(self.route_panel, text=f"Best for: {route.best_for}",
-                  foreground="gray40").grid(row=1, column=0, sticky="w")
+                  style="Muted.TLabel").grid(row=1, column=0, sticky="w")
 
         row = 2
         if route.command:
@@ -601,7 +634,7 @@ class DataTab(ttk.Frame):
             ttk.Label(self.route_panel,
                       text="Select the text above and copy it — then run it on "
                            "your own computer, not here.",
-                      foreground="gray40").grid(row=row + 1, column=0, sticky="w")
+                      style="Muted.TLabel").grid(row=row + 1, column=0, sticky="w")
             row += 2
 
         link_row = ttk.Frame(self.route_panel)
@@ -672,13 +705,16 @@ class DeployTab(ttk.Frame):
         ttk.Label(adv,
                   text="Leave blank unless a dependency won't build — an older "
                        "Python often fixes an old project.",
-                  foreground="gray40", wraplength=560).grid(
+                  style="Muted.TLabel", wraplength=560).grid(
             row=2, column=0, columnspan=4, sticky="w", pady=(4, 0))
 
         actions = ttk.Frame(self)
         actions.grid(row=2, column=0, sticky="ew", pady=(PAD, 0))
+        # The one primary action in the whole window, so it gets the theme's
+        # accent treatment. Every other button here is secondary by design.
         self.deploy_btn = ttk.Button(actions, text="Publish my dashboard",
-                                     command=self._deploy, state="disabled")
+                                     command=self._deploy, state="disabled",
+                                     style="Accent.TButton")
         self.deploy_btn.grid(row=0, column=0)
         self.cancel_btn = ttk.Button(actions, text="Stop", command=self._cancel,
                                      state="disabled")
@@ -852,7 +888,7 @@ class ManageTab(ttk.Frame):
 
         self.status = tk.StringVar(value="Checking…")
         ttk.Label(self, textvariable=self.status, wraplength=680,
-                  justify="left", font=("TkDefaultFont", 11)).grid(
+                  justify="left", style="Subtitle.TLabel").grid(
             row=0, column=0, sticky="w")
 
         row = ttk.Frame(self)
@@ -883,7 +919,7 @@ class ManageTab(ttk.Frame):
                    command=self._save_report).grid(row=0, column=1, padx=PAD)
         self.checked_at = tk.StringVar(value="")
         ttk.Label(row2, textvariable=self.checked_at,
-                  foreground="#666").grid(row=0, column=2, sticky="w")
+                  style="Muted.TLabel").grid(row=0, column=2, sticky="w")
 
         # The detail behind the headline. Collapsed into a plain grid of
         # label/value pairs rather than a table widget: there are only a
@@ -1266,6 +1302,9 @@ class ManageTab(ttk.Frame):
 # --------------------------------------------------------------------------
 class MainWindow(ttk.Frame):
     def __init__(self, root: tk.Tk) -> None:
+        # Before any widget is built: a ttk style is read when a widget is
+        # created, not re-read afterwards.
+        _init_styles()
         super().__init__(root, padding=PAD)
         self.grid(row=0, column=0, sticky="nsew")
         root.columnconfigure(0, weight=1)
