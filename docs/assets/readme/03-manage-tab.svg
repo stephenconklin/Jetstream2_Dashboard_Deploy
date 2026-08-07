@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 560" role="img"
+     aria-label="Placeholder for a screenshot of the application's Manage tab">
+  <!-- Placeholder. Replace with 03-manage-tab.png once captured. -->
+  <rect x="2" y="2" width="1196" height="556" rx="10"
+        fill="#8b949e" fill-opacity="0.06"
+        stroke="#8b949e" stroke-opacity="0.55" stroke-width="2.5"
+        stroke-dasharray="12 9"/>
+
+  <!-- suggestion of a status panel: headline, button row, detail rows -->
+  <g stroke="#8b949e" stroke-opacity="0.38" fill="none" stroke-width="2">
+    <rect x="190" y="110" width="820" height="330" rx="8"/>
+    <rect x="222" y="188" width="128" height="30" rx="6"/>
+    <rect x="364" y="188" width="98" height="30" rx="6"/>
+    <rect x="476" y="188" width="98" height="30" rx="6"/>
+    <rect x="588" y="188" width="98" height="30" rx="6"/>
+  </g>
+  <g stroke="#8b949e" stroke-opacity="0.28" stroke-width="9" stroke-linecap="round">
+    <line x1="222" y1="152" x2="600" y2="152"/>
+    <line x1="222" y1="262" x2="430" y2="262"/><line x1="560" y1="262" x2="760" y2="262"/>
+    <line x1="222" y1="298" x2="430" y2="298"/><line x1="560" y1="298" x2="700" y2="298"/>
+    <line x1="222" y1="334" x2="430" y2="334"/><line x1="560" y1="334" x2="820" y2="334"/>
+  </g>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
+     text-anchor="middle" fill="#8b949e">
+    <text x="600" y="400" font-size="15" font-weight="700" letter-spacing="2.5">SCREENSHOT</text>
+    <text x="600" y="443" font-size="26" font-weight="600" fill-opacity="0.95">The Manage tab</text>
+    <text x="600" y="478" font-size="18" fill-opacity="0.75">Which layer is broken, how much disk is left, and the app's own log</text>
+    <text x="600" y="524" font-size="15" fill-opacity="0.6"
+          font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">docs/assets/readme/03-manage-tab.png</text>
+  </g>
+</svg>

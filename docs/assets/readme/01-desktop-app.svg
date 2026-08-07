@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720" role="img"
+     aria-label="Placeholder for a screenshot of the Deploy My Dashboard application">
+  <!-- Placeholder. Replace this file with 01-desktop-app.png (and change the
+       extension in README.md) once the screenshot is captured.
+       Greys chosen to read on both GitHub light and dark themes. -->
+  <rect x="2" y="2" width="1196" height="716" rx="10"
+        fill="#8b949e" fill-opacity="0.06"
+        stroke="#8b949e" stroke-opacity="0.55" stroke-width="2.5"
+        stroke-dasharray="12 9"/>
+
+  <!-- suggestion of a window: title bar + four tabs -->
+  <g stroke="#8b949e" stroke-opacity="0.4" fill="none" stroke-width="2">
+    <rect x="150" y="150" width="900" height="440" rx="8"/>
+    <line x1="150" y1="196" x2="1050" y2="196"/>
+    <line x1="150" y1="248" x2="1050" y2="248"/>
+    <line x1="375" y1="196" x2="375" y2="248"/>
+    <line x1="600" y1="196" x2="600" y2="248"/>
+    <line x1="825" y1="196" x2="825" y2="248"/>
+  </g>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
+     font-size="17" fill="#8b949e" fill-opacity="0.85" text-anchor="middle">
+    <text x="262" y="228">1. Your app</text>
+    <text x="487" y="228">2. Your data</text>
+    <text x="712" y="228">3. Publish</text>
+    <text x="937" y="228">4. Manage</text>
+  </g>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
+     text-anchor="middle" fill="#8b949e">
+    <text x="600" y="370" font-size="15" font-weight="700" letter-spacing="2.5">SCREENSHOT</text>
+    <text x="600" y="415" font-size="27" font-weight="600" fill-opacity="0.95">The Deploy My Dashboard application</text>
+    <text x="600" y="452" font-size="18" fill-opacity="0.75">Four tabs, no terminal: your app → your data → publish → manage</text>
+    <text x="600" y="530" font-size="15" fill-opacity="0.6"
+          font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">docs/assets/readme/01-desktop-app.png</text>
+  </g>
+</svg>

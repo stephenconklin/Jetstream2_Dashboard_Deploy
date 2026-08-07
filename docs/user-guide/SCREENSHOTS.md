@@ -159,6 +159,38 @@ Capture these on a real instance with a real (or demo) project published.
 
 ---
 
+## The README (3 shots)
+
+The repository's front page carries three images of its own, in
+`docs/assets/readme/`. These are currently **SVG placeholders** rather than
+dashed boxes — they render as clean grey panels on the GitHub page, in both
+light and dark themes.
+
+| # | Filename | What it shows |
+|---|---|---|
+| R1 | `01-desktop-app.png` | The application window with all four tabs — the same shot as `p3-app-overview.png`, so capture it once and use it twice |
+| R2 | `02-published-dashboard.png` | A finished dashboard live in a browser, **with the address bar visible**. This is the payoff image; make it an attractive dashboard |
+| R3 | `03-manage-tab.png` | The Manage tab with a healthy verdict — same shot as `p3-tab4-healthy.png` |
+
+**Swapping these is different from the guide's placeholders.** Drop the PNG into
+`docs/assets/readme/`, then change the extension in `README.md`:
+
+```html
+<img src="docs/assets/readme/01-desktop-app.svg" ...>   <!-- before -->
+<img src="docs/assets/readme/01-desktop-app.png" ...>   <!-- after  -->
+```
+
+Delete the `.svg` once its `.png` is in place. Keep the `alt` text and the
+`width="100%"`.
+
+!!! tip "Redact the IP in R2"
+
+    The README is the most-viewed page in the repository. Either use a demo
+    instance you're about to delete, or blur the address bar down to
+    `http://149.165.xxx.xxx/` to match the placeholder.
+
+---
+
 ## Optional extras
 
 Not referenced by any page yet — add the figure markup if you capture them.
@@ -181,8 +213,10 @@ Not referenced by any page yet — add the figure markup if you capture them.
 - [ ] Part 3 — tab 2 (5 shots)
 - [ ] Part 3 — tab 3 (5 shots)
 - [ ] Part 3 — tab 4 (6 shots)
+- [ ] README (3 shots — two are duplicates of guide shots)
 
-**35 shots total.** Realistically two sessions: one in Exosphere while creating
+**35 shots for the guide, plus 3 for the README** (of which R1 and R3 are the
+same captures as #14 and #30, so 36 distinct images in total). Realistically two sessions: one in Exosphere while creating
 a fresh instance and volume (shots 1–12), and one on the instance working
 through a real publish end to end (shots 13–35). Doing the second in one pass,
 in guide order, is much faster than hunting for individual states later — and
