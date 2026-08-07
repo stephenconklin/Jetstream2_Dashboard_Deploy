@@ -33,7 +33,7 @@
 # ---------------------------------------------------------------------------
 # It does not provision your data. Research datasets are routinely tens of GB
 # and belong on an attached Jetstream2 volume, not in a git clone or a Docker
-# image. Attach and mount the volume first; see docs/deployment.md.
+# image. Attach and mount the volume first; see docs/user-guide/reference/deployment.md.
 #
 # Lets `shellcheck -x` resolve both `source` lines below (lib/proxy.sh and
 # deploy.env) relative to this script rather than the caller's cwd. Has to sit

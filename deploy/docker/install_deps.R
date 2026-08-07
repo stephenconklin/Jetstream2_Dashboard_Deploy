@@ -32,7 +32,7 @@ lockfile <- file.path(project_dir, "renv.lock")
 # GDAL API (e.g. GDALMDArray::AsClassicDataset()'s 3-arg overload only
 # exists in GDAL >= 3.8) — so a terra version newer than this table's
 # entry can fail to compile here with no change to the deployed project's
-# own code, only to CRAN. See docs/deployment.md's "Pinning R package
+# own code, only to CRAN. See docs/user-guide/reference/deployment.md's "Pinning R package
 # versions" section for how these were derived, and update this table if a
 # newer BASE_IMAGE ships a newer GDAL.
 KNOWN_COMPATIBLE_VERSIONS <- list(
@@ -75,7 +75,7 @@ if (file.exists(lockfile)) {
         paste(
           "Warning: this renv.lock pins %s %s, but GDAL %s (< %s) is available here —",
           "%s %s is the newest version confirmed to compile against it.",
-          "If the restore below fails, see docs/deployment.md's 'Pinning R package",
+          "If the restore below fails, see docs/user-guide/reference/deployment.md's 'Pinning R package",
           "versions' section to pin an older, compatible version by hand instead of",
           "waiting through the retries."
         ),

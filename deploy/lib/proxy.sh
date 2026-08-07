@@ -53,7 +53,7 @@ HEALTH_START_PERIOD="300s"
 
 # Every path under this prefix belongs to the deployment tooling (nginx's own
 # health endpoint, the maintenance page) and is not proxied to the app.
-# Documented in docs/deployment.md so a project knows not to claim it.
+# Documented in docs/user-guide/reference/deployment.md so a project knows not to claim it.
 DEPLOY_RESERVED_PREFIX="/_deploy/"
 
 # Read one key out of the proxy state file. Parsed rather than sourced: this

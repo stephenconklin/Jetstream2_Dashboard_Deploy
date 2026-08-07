@@ -1,0 +1,10 @@
+# Documentation build dependencies. Nothing here is needed to *use* the
+# deployment tooling — it is only for building the guide site.
+#
+# Build it locally with:
+#   pip install -r docs/user-guide/requirements.txt
+#   mkdocs serve
+
+mkdocs==1.6.1
+mkdocs-material==9.5.49
+mkdocs-git-revision-date-localized-plugin==1.3.0

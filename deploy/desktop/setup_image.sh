@@ -188,7 +188,7 @@ cat <<'BANNER'
   Terminal:  cd ~/Jetstream2_Dashboard_Deploy
              ./deploy/build_and_run.sh /path/to/your/project
 
-  Docs: ~/Jetstream2_Dashboard_Deploy/docs/deployment.md
+  Docs: ~/Jetstream2_Dashboard_Deploy/docs/user-guide/reference/deployment.md
 
 BANNER
 MOTD

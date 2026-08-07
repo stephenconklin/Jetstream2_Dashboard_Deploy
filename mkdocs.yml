@@ -1,0 +1,128 @@
+site_name: Publish Your Dashboard on Jetstream2
+site_description: >-
+  A step-by-step guide for researchers publishing an R Shiny, Plotly Dash,
+  Python Shiny, or Streamlit dashboard to a Jetstream2 cloud instance.
+site_url: https://jetstream2-dashboard-deploy.readthedocs.io/
+repo_url: https://github.com/stephenconklin/Jetstream2_Dashboard_Deploy
+repo_name: Jetstream2_Dashboard_Deploy
+edit_uri: edit/main/docs/user-guide/
+
+# The guide is self-contained in docs/user-guide/. This config lives at the
+# repo root so MkDocs resolves that path, and so Read the Docs finds it in
+# the conventional place.
+docs_dir: docs/user-guide
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link      # picking "R" in one tab set picks it in all of them
+    - search.highlight
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: deep orange
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: deep orange
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+extra_css:
+  - assets/extra.css
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - def_list
+  - footnotes
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+  - git-revision-date-localized:
+      enable_creation_date: false
+      fallback_to_build_date: true
+
+nav:
+  - Start here: index.md
+  - Before you start: before-you-start.md
+
+  - "Part 1 · Set up your server":
+      - Overview: part1-instance/index.md
+      - Create your instance: part1-instance/create-instance.md
+      - Create a storage volume: part1-instance/create-volume.md
+      - Attach the volume: part1-instance/attach-volume.md
+
+  - "Part 2 · Prepare your dashboard":
+      - Overview: part2-prepare/index.md
+      - Check your file layout: part2-prepare/entry-point.md
+      - "R: create a renv.lock": part2-prepare/r-packages.md
+      - "Python: create a requirements.txt": part2-prepare/python-packages.md
+      - How your app finds its data: part2-prepare/data-paths.md
+      - Final checks before you upload: part2-prepare/before-you-upload.md
+
+  - "Part 3 · Publish it":
+      - Overview: part3-deploy/index.md
+      - Open the web desktop: part3-deploy/open-the-desktop.md
+      - "Step 1 · Your app": part3-deploy/step1-your-app.md
+      - "Step 2 · Your data": part3-deploy/step2-your-data.md
+      - "Step 3 · Publish": part3-deploy/step3-publish.md
+      - "Step 4 · Manage": part3-deploy/step4-manage.md
+      - Share and update your dashboard: part3-deploy/share-your-dashboard.md
+
+  - Help:
+      - When something goes wrong: help/troubleshooting.md
+      - Questions people ask: help/faq.md
+
+  - Technical reference:
+      - Overview: reference/index.md
+      - Full deployment reference: reference/deployment.md
+      - Getting files onto the instance: reference/getting-your-files-onto-the-instance.md
+      - Command line equivalents: reference/command-line.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/stephenconklin/Jetstream2_Dashboard_Deploy
+  jetstream_docs: https://docs.jetstream-cloud.org/
+
+# Kept alongside the guide for whoever captures the screenshots, but not part
+# of the published site. requirements.txt lives here so Read the Docs can find
+# it at a stable path; it is build input, not a page.
+exclude_docs: |
+  SCREENSHOTS.md
+  requirements.txt
+  assets/screenshots/README.md

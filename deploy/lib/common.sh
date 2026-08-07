@@ -215,7 +215,7 @@ resolve_build_platform() {
 # compile failure (e.g. a CRAN-latest package needing a newer system library
 # than BASE_IMAGE ships) surfaces here with clean output, before the real
 # build starts. Doesn't resolve that failure itself — see
-# docs/deployment.md's "Pinning R package versions" section for the manual
+# docs/user-guide/reference/deployment.md's "Pinning R package versions" section for the manual
 # fallback — but locks in whatever version does work once you've fixed it
 # and re-run.
 #
@@ -252,7 +252,7 @@ generate_renv_lock() {
     -v "$TOOLING_DIR/docker/generate_lock.R:/tmp/generate_lock.R:ro" \
     "${real_image_name}-deps-base:latest" \
     Rscript /tmp/generate_lock.R /app; then
-    echo "Failed to generate renv.lock. See docs/deployment.md's 'Pinning R package" >&2
+    echo "Failed to generate renv.lock. See docs/user-guide/reference/deployment.md's 'Pinning R package" >&2
     echo "versions' section for how to resolve a compile failure (e.g. a package needing" >&2
     echo "a newer system library than $BASE_IMAGE ships) by pinning an older version by hand." >&2
     echo "(Leaving the ${real_image_name}-deps-base image in place for debugging — remove" >&2
@@ -464,7 +464,7 @@ summarize_build_failure() {
   echo "A pinned package that won't build is the most common cause. If the" >&2
   echo "version is old, it may predate the Python or R in the base image —" >&2
   echo "either relax the pin, or set BASE_IMAGE to an older one." >&2
-  echo "See docs/deployment.md's 'Pinning' sections." >&2
+  echo "See docs/user-guide/reference/deployment.md's 'Pinning' sections." >&2
 }
 
 # `docker rm -f` + `docker run -d`, parameterized by internal port and data

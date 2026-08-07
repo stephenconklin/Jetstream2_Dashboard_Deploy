@@ -2,7 +2,7 @@
 
 Deployment tooling that helps scientific researchers get their data dashboards out of a laptop/notebook and onto a publicly accessible web server on [Jetstream2](https://jetstream-cloud.org/) — no DevOps background required. Point it at any **R Shiny**, **Plotly Dash**, **Python Shiny**, or **Streamlit** project and get it reachable in a browser on port 80, with no manual GDAL/GEOS wrangling, no hand-written package lists (where the framework allows it), and no figuring out which Dockerfile or run command to use.
 
-A single script, [`deploy/build_and_run.sh`](deploy/build_and_run.sh), auto-detects which of the four frameworks a dropped-in project is (from its code, not just filenames), builds a self-contained Docker image, and runs it. A companion script, [`deploy/bootstrap.sh`](deploy/bootstrap.sh), provisions a bare instance to host it — Docker, swap, an nginx reverse proxy, TLS, and automatic restart of a wedged dashboard. There's also a **desktop application** for researchers who'd rather not use a terminal at all. This README covers the basics; full details, design rationale, and the auto-detection story are in [`docs/deployment.md`](docs/deployment.md).
+A single script, [`deploy/build_and_run.sh`](deploy/build_and_run.sh), auto-detects which of the four frameworks a dropped-in project is (from its code, not just filenames), builds a self-contained Docker image, and runs it. A companion script, [`deploy/bootstrap.sh`](deploy/bootstrap.sh), provisions a bare instance to host it — Docker, swap, an nginx reverse proxy, TLS, and automatic restart of a wedged dashboard. There's also a **desktop application** for researchers who'd rather not use a terminal at all. This README covers the basics; full details, design rationale, and the auto-detection story are in [`docs/user-guide/reference/deployment.md`](docs/user-guide/reference/deployment.md).
 
 ## Quick start
 
@@ -40,9 +40,20 @@ On a Jetstream2 instance built from the prepared image, researchers can open **D
 ./deploy/gui/launch_gui.sh    # or just click the desktop icon
 ```
 
-It's a thin front end over the same `build_and_run.sh`, so nothing is hidden and the two paths can't drift apart. Builds keep running even if the remote-desktop session drops. See [the desktop application](docs/deployment.md#the-desktop-application).
+It's a thin front end over the same `build_and_run.sh`, so nothing is hidden and the two paths can't drift apart. Builds keep running even if the remote-desktop session drops. See [the desktop application](docs/user-guide/reference/deployment.md#the-desktop-application).
 
-New to moving files onto a cloud instance? [Getting your files onto the instance](docs/getting-your-files-onto-the-instance.md) covers Git, drag-and-drop, rsync, cloud storage, and Globus.
+New to moving files onto a cloud instance? [Getting your files onto the instance](docs/user-guide/reference/getting-your-files-onto-the-instance.md) covers Git, drag-and-drop, rsync, cloud storage, and Globus.
+
+## Documentation
+
+**Researchers start here: [the user guide](https://jetstream2-dashboard-deploy.readthedocs.io/).** It walks through creating a Jetstream2 instance and storage volume, preparing a dashboard for deployment (`renv.lock`/`requirements.txt`, data paths), and publishing it with the desktop application — assuming no Docker, no web-server experience, and no terminal.
+
+The source lives in [`docs/user-guide/`](docs/user-guide/) and builds with MkDocs:
+
+```bash
+pip install -r docs/user-guide/requirements.txt
+mkdocs serve        # http://127.0.0.1:8000
+```
 
 ## What's in here
 
@@ -86,14 +97,21 @@ examples/
 ├── dash-hello-world/          # Plotly Dash self-test app
 ├── python-shiny-hello-world/  # Python Shiny self-test app
 └── streamlit-hello-world/     # Streamlit self-test app
-docs/
-├── deployment.md             # full walkthrough, prerequisites, and design rationale
-└── getting-your-files-onto-the-instance.md   # git, rsync, cloud storage, Globus
+docs/user-guide/           # the researcher-facing guide, published to Read the Docs
+├── index.md               # start here
+├── part1-instance/        # create a Jetstream2 instance and storage volume
+├── part2-prepare/         # renv.lock / requirements.txt, data paths
+├── part3-deploy/          # the desktop application, step by step
+├── help/                  # troubleshooting and FAQ
+└── reference/
+    ├── deployment.md      # full walkthrough, prerequisites, and design rationale
+    ├── getting-your-files-onto-the-instance.md   # git, rsync, cloud storage, Globus
+    └── command-line.md    # every GUI button and the command it runs
 .githooks/
 └── pre-commit                # runs deploy/lint.sh before each commit (opt-in)
 ```
 
-See [`docs/deployment.md`](docs/deployment.md) for prerequisites, step-by-step instructions, and the reasoning behind each design choice.
+See [`docs/user-guide/reference/deployment.md`](docs/user-guide/reference/deployment.md) for prerequisites, step-by-step instructions, and the reasoning behind each design choice.
 
 ## Managing the running app
 
@@ -125,7 +143,7 @@ Researchers get all of this without a terminal: the desktop application's **Mana
 
 `manage.sh health` is the one to reach for when the dashboard doesn't load: with nginx in front, an app failure and a proxy failure look identical from a browser but need different fixes, and it says which you have. Note that a healthy verdict means *reachable*, not *correct* — Shiny and Streamlit render their own errors as a page and still answer 200.
 
-See [`docs/deployment.md`](docs/deployment.md#command-reference) for the full command reference, [health and diagnosis](docs/deployment.md#health-and-diagnosis) for what each verdict means, and [reclaiming disk space](docs/deployment.md#reclaiming-disk-space) for the rest of the cleanup options.
+See [`docs/user-guide/reference/deployment.md`](docs/user-guide/reference/deployment.md#command-reference) for the full command reference, [health and diagnosis](docs/user-guide/reference/deployment.md#health-and-diagnosis) for what each verdict means, and [reclaiming disk space](docs/user-guide/reference/deployment.md#reclaiming-disk-space) for the rest of the cleanup options.
 
 ## License
 

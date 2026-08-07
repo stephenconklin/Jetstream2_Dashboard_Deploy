@@ -6,7 +6,7 @@
 # system libraries (e.g. terra needing a newer GDAL than the image ships)
 # surfaces here, before the real build, instead of buried in `docker build`
 # output. It doesn't resolve that kind of failure itself — see
-# docs/deployment.md's "Pinning R package versions" section for the manual
+# docs/user-guide/reference/deployment.md's "Pinning R package versions" section for the manual
 # fallback — but once a working set of versions is installed, it locks them
 # in so the real build (and every rebuild after) is reproducible.
 args <- commandArgs(trailingOnly = TRUE)
@@ -37,7 +37,7 @@ required <- unique(deps$Package)
 # exists in GDAL >= 3.8) — so blindly installing CRAN-latest terra can
 # start failing to compile here with no change to the deployed project's
 # own code, only to CRAN. Pin known-compatible versions instead of
-# CRAN-latest for packages in this situation; see docs/deployment.md's
+# CRAN-latest for packages in this situation; see docs/user-guide/reference/deployment.md's
 # "Pinning R package versions" section for how these were derived, and
 # update this table if a newer BASE_IMAGE ships a newer GDAL.
 KNOWN_COMPATIBLE_VERSIONS <- list(

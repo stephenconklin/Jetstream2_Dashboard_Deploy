@@ -175,7 +175,7 @@ if [[ "$FRAMEWORK" == "r-shiny" ]]; then
     echo "no renv.lock. A renv.lock will be generated automatically below, installing" >&2
     echo "whatever's newest on CRAN — but a newer release of one of these packages can" >&2
     echo "need a newer GDAL/GEOS/PROJ than $BASE_IMAGE ships, which would fail that step." >&2
-    echo "See docs/deployment.md's 'Pinning R package versions' section for how to pin an" >&2
+    echo "See docs/user-guide/reference/deployment.md's 'Pinning R package versions' section for how to pin an" >&2
     echo "older, compatible version by hand if that happens." >&2
   fi
 else

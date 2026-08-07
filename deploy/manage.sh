@@ -12,7 +12,7 @@
 #   ./deploy/manage.sh report [path]
 #
 # These are thin wrappers over plain `docker` commands, which still work
-# directly and are documented in docs/deployment.md — nothing here is
+# directly and are documented in docs/user-guide/reference/deployment.md — nothing here is
 # required to operate a deployment by hand.
 #
 # It exists because the GUI needs them, and the alternative was Python

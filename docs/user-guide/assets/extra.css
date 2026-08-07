@@ -1,0 +1,113 @@
+/* Styling specific to this guide. Everything else comes from Material.
+   Colours are expressed with Material's own CSS variables so both the light
+   and dark palettes stay readable without a second set of rules. */
+
+/* --------------------------------------------------------------------------
+   Screenshot placeholders.
+
+   Every figure in this guide is marked up as <figure class="shot"> with a
+   real caption. Until the PNG exists, the figure carries an extra
+   "shot--todo" class and renders as a dashed box naming the file that should
+   replace it. Swapping in the real image is a two-line edit — see
+   SCREENSHOTS.md — and nothing about the surrounding page changes.
+   -------------------------------------------------------------------------- */
+
+figure.shot {
+  margin: 1.4em 0;
+  text-align: center;
+}
+
+figure.shot img {
+  max-width: 100%;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.10);
+}
+
+figure.shot figcaption {
+  margin-top: 0.6em;
+  font-size: 0.8rem;
+  color: var(--md-default-fg-color--light);
+  text-align: left;
+}
+
+figure.shot--todo .shot__box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4em;
+  min-height: 8rem;
+  padding: 1.6em 1em;
+  border: 2px dashed var(--md-default-fg-color--lighter);
+  border-radius: 6px;
+  background: var(--md-code-bg-color);
+  color: var(--md-default-fg-color--light);
+}
+
+figure.shot--todo .shot__label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+figure.shot--todo .shot__file {
+  font-family: var(--md-code-font-family);
+  font-size: 0.75rem;
+  color: var(--md-typeset-a-color);
+  word-break: break-all;
+}
+
+/* --------------------------------------------------------------------------
+   The numbered-step ribbon used at the top of each Part.
+   -------------------------------------------------------------------------- */
+
+.steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  margin: 1.2em 0 1.6em;
+  padding: 0;
+  list-style: none;
+}
+
+.steps li {
+  flex: 1 1 8rem;
+  margin: 0;
+  padding: 0.7em 0.9em;
+  border-radius: 4px;
+  background: var(--md-code-bg-color);
+  border-left: 3px solid var(--md-default-fg-color--lightest);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.steps li.is-current {
+  border-left-color: var(--md-typeset-a-color);
+  font-weight: 600;
+}
+
+.steps li .steps__n {
+  display: block;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--md-default-fg-color--light);
+}
+
+/* --------------------------------------------------------------------------
+   Small helpers.
+   -------------------------------------------------------------------------- */
+
+/* Time estimates and similar asides at the top of a page. */
+.meta-line {
+  font-size: 0.78rem;
+  color: var(--md-default-fg-color--light);
+  margin-top: -0.6em;
+}
+
+/* Keep wide reference tables scrollable rather than squeezing the columns. */
+.md-typeset__table {
+  min-width: 0;
+}
