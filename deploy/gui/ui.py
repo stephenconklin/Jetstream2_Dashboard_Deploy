@@ -1048,8 +1048,21 @@ class DeployTab(ttk.Frame):
         WrapLabel(self, textvariable=self.summary, wraplength=620,
                   justify="left").grid(row=0, column=0, sticky="w")
 
-        adv = ttk.LabelFrame(self, text="Advanced (rarely needed)", padding=PAD)
-        adv.grid(row=1, column=0, sticky="ew", pady=(PAD, 0))
+        # Collapsed by default: almost nobody needs these, and three empty
+        # fields above the publish button read as three things to fill in.
+        # The header says when any are set, so a value can't sit unseen in a
+        # closed section and quietly change the next build.
+        adv_box = ttk.Frame(self)
+        adv_box.grid(row=1, column=0, sticky="ew", pady=(PAD, 0))
+        adv_box.columnconfigure(0, weight=1)
+        self.adv_toggle = ttk.Button(adv_box, style="Toolbutton",
+                                     command=self._toggle_advanced)
+        self.adv_toggle.grid(row=0, column=0, sticky="w")
+        adv = ttk.LabelFrame(adv_box, padding=PAD)
+        adv.grid(row=1, column=0, sticky="ew")
+        adv.grid_remove()
+        self.adv = adv
+        self._adv_open = False
         self.framework_var = tk.StringVar()
         self.port_var = tk.StringVar()
         ttk.Label(adv, text="Force framework:").grid(row=0, column=0, sticky="w")
@@ -1080,6 +1093,9 @@ class DeployTab(ttk.Frame):
                        "Python often fixes an old project.",
                   style="Muted.TLabel", wraplength=560).grid(
             row=2, column=0, columnspan=4, sticky="w", pady=(4, 0))
+        for var in (self.framework_var, self.port_var, self.base_image_var):
+            var.trace_add("write", lambda *_: self._label_advanced())
+        self._label_advanced()
 
         actions = ttk.Frame(self)
         actions.grid(row=2, column=0, sticky="ew", pady=(PAD, 0))
@@ -1121,6 +1137,22 @@ class DeployTab(ttk.Frame):
 
         self._refresh()
         self._reattach()
+
+    def _toggle_advanced(self) -> None:
+        self._adv_open = not self._adv_open
+        if self._adv_open:
+            self.adv.grid()
+        else:
+            self.adv.grid_remove()
+        self._label_advanced()
+
+    def _label_advanced(self) -> None:
+        arrow = "▾" if self._adv_open else "▸"
+        in_use = any(v.get().strip() for v in
+                     (self.framework_var, self.port_var, self.base_image_var))
+        self.adv_toggle.configure(
+            text=f"{arrow} Advanced (rarely needed)"
+                 + (" — settings in use" if in_use else ""))
 
     def _refresh(self) -> None:
         # The Advanced overrides describe one project. Carried over to the

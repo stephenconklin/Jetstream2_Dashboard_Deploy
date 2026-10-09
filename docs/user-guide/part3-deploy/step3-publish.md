@@ -115,6 +115,11 @@ and publish it again.
 
 Skip this section entirely on your first attempt. Come back if the build fails.
 
+The panel starts closed; click **▸ Advanced (rarely needed)** to open it. While
+it's closed, the heading adds **— settings in use** if any of these is filled
+in. All three are cleared when you choose a different folder on tab 1, so a
+setting made for one dashboard never carries over to the next.
+
 <figure class="shot">
   <img src="../../assets/screenshots/p3-tab3-advanced.png"
        alt="The Advanced panel expanded, showing Force framework, App's internal port, and Base image.">
