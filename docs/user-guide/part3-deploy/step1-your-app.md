@@ -179,7 +179,7 @@ fixed in the published copy only, never in your folder:
 An error dialog appears with the script's own explanation. The ones you're
 likely to see:
 
-??? failure "\"Couldn't find a dashboard's main file\""
+??? failure "“Couldn't find a dashboard's main file”"
 
     Nothing in the folder looks like a dashboard to the automatic check.
     If the folder does contain `.R` or `.py` files, the application offers to
@@ -196,14 +196,14 @@ likely to see:
     If your app lives in a subfolder, add a shim — see
     [the starting file must be at the top level](../part2-prepare/entry-point.md#the-starting-file-must-be-at-the-top-level).
 
-??? failure "\"That file can't be used\""
+??? failure "“That file can't be used”"
 
     The file you chose as the main file was turned down, with the reason.
     The most common one: the folder also has an `app.R`, which the server
     always runs first. Choose `app.R`, or rename it (to `old_app.R`, say) so
     the file you chose is the one that runs.
 
-??? failure "\"Multiple framework signals detected\" — Python files for different frameworks"
+??? failure "“Multiple framework signals detected” — Python files for different frameworks"
 
     The error names each file and the framework signal it found in each —
     say, a Dash `app.py` next to an old Streamlit script. Almost always a
@@ -214,7 +214,7 @@ likely to see:
     and select the folder again. Renaming to
     `old_app.py.bak` is enough.
 
-??? failure "\"no requirements.txt was found\""
+??? failure "“no requirements.txt was found”"
 
     A Python project without its package list. This is a hard stop — the
     application will let you select the project, but the Publish button on
@@ -231,7 +231,7 @@ likely to see:
 
     Then click **Use this folder** again to re-inspect.
 
-??? failure "\"Could not download\" from a Git address"
+??? failure "“Could not download” from a Git address"
 
     Check the URL is right and reachable — paste it into the desktop's browser
     to confirm. For a private repository, use a personal access token as the

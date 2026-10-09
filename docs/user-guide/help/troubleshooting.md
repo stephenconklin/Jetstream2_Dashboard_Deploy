@@ -24,21 +24,21 @@ domain name), the right IP, no port number, no trailing path. `http://149.165.17
 
 Then open the Manage tab and match the headline:
 
-??? failure "\"Nothing is published yet\""
+??? failure "“Nothing is published yet”"
 
     No dashboard exists on this instance. Either you haven't published, or you
     published on a *different* instance.
 
     Check the IP in Exosphere matches the one you're visiting.
 
-??? failure "\"Your dashboard is stopped\""
+??? failure "“Your dashboard is stopped”"
 
     Somebody pressed **Stop**, or it was stopped from a terminal. It stays
     stopped until started, including through reboots.
 
     Press **Start**.
 
-??? failure "\"Your dashboard isn't answering.\""
+??? failure "“Your dashboard isn't answering.”"
 
     The container is running but your app inside it is silent. Nearly always
     your app crashed at startup.
@@ -54,7 +54,7 @@ Then open the Manage tab and match the headline:
        - **A missing package** → your package list is incomplete
        - **An error in the startup code** → the traceback names the line
 
-??? failure "\"The web server isn't serving\" / \"can't reach the app\""
+??? failure "“The web server isn't serving” / “can't reach the app”"
 
     Your app is fine; nginx in front of it isn't. See
     [nginx problems](#nginx-problems) below.
@@ -81,7 +81,7 @@ The page opens and shows a traceback, a red error box, or a broken plot.
 application never claims your dashboard is "working" — only that it's live.
 Shiny and Streamlit catch errors in your code and render them as a page.
 
-!!! tip "R Shiny's \"An error has occurred. Check your logs…\""
+!!! tip "R Shiny's “An error has occurred. Check your logs…”"
 
     Shiny hides the real error from visitors and shows that sentence instead.
     To see it: open the page so the error happens, then go to **4. Manage** →
@@ -287,7 +287,7 @@ this is what it means.
 
 These need a terminal.
 
-??? failure "\"The web server isn't serving\""
+??? failure "“The web server isn't serving”"
 
     ```bash
     sudo systemctl status nginx
@@ -303,7 +303,7 @@ These need a terminal.
     sudo ./deploy/bootstrap.sh
     ```
 
-??? failure "\"The web server can't reach the app\""
+??? failure "“The web server can't reach the app”"
 
     Both are running but not talking. Usually the app is still starting up —
     wait a minute and press **Refresh**.
@@ -352,7 +352,7 @@ These need a terminal.
     record where it came from. Publish once more and it will restore correctly
     from then on.
 
-??? failure "\"Your dashboard is running, but the folder it was published from is no longer there\""
+??? failure "“Your dashboard is running, but the folder it was published from is no longer there”"
 
     You deleted or moved the project folder. **Your dashboard is unaffected** —
     its code was copied into the image when you published.

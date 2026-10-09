@@ -36,7 +36,7 @@ chance to catch a wrong choice before spending build time on it.
 
 The summary may also warn you about one of these:
 
-??? warning "\"This project has no renv.lock, so its R packages will be worked out and recorded first\""
+??? warning "“This project has no renv.lock, so its R packages will be worked out and recorded first”"
 
     Not an error. The tooling will scan your code, work out which R packages
     you use, install them once to record the exact versions, then install them
@@ -50,7 +50,7 @@ The summary may also warn you about one of these:
     [creating the lockfile yourself](../part2-prepare/r-packages.md), which is
     worth doing for anything you'll rebuild.
 
-??? danger "\"WARNING: that folder is empty\""
+??? danger "“WARNING: that folder is empty”"
 
     The data folder you chose in step 2 has nothing in it. It will be attached
     over your app's own data folder, hiding anything your project shipped, and
@@ -59,7 +59,7 @@ The summary may also warn you about one of these:
     Go back to [step 2](step2-your-data.md#check-what-s-arrived), upload your
     data, and press **Look in that folder now** until it lists files.
 
-??? failure "\"Before this can be published it needs a requirements.txt\""
+??? failure "“Before this can be published it needs a requirements.txt”"
 
     A hard stop for Python projects — the Publish button stays disabled.
 
@@ -72,20 +72,20 @@ The summary may also warn you about one of these:
     See [creating a requirements.txt](../part2-prepare/python-packages.md),
     then re-select the folder on tab 1.
 
-??? note "\"You chose to keep your data in a separate folder — pick that folder in step 2\""
+??? note "“You chose to keep your data in a separate folder — pick that folder in step 2”"
 
     You chose Option 2 on tab 2 but haven't picked the folder yet. The
     Publish button stays disabled until you do, or until you switch back to
     publishing the data with the app.
 
-??? warning "\"WARNING: that's a lot to publish with the app\""
+??? warning "“WARNING: that's a lot to publish with the app”"
 
     Your app folder is over about a gigabyte, and everything in it would be
     copied into the published dashboard on every publish. Move the data into
     one folder on a storage volume and choose
     [Option 2 on step 2](step2-your-data.md#option-2-in-a-separate-folder-on-this-server).
 
-??? failure "\"Several files in your folder could be the dashboard\""
+??? failure "“Several files in your folder could be the dashboard”"
 
     Go back to [step 1](step1-your-app.md#your-dashboards-main-file) and pick
     the main file from the dropdown.
@@ -242,7 +242,7 @@ Open it and check it looks the way you expect.
 
 **Click "Open it now" and actually look at your dashboard.**
 
-!!! danger "\"Published\" does not mean \"working\""
+!!! danger "“Published” does not mean “working”"
 
     This is the most important sentence in the guide.
 
