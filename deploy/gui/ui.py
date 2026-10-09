@@ -1066,6 +1066,7 @@ class DeployTab(ttk.Frame):
         # difference between "won't build" and "works first time". Editable
         # rather than a fixed list, since R projects need rocker/* values.
         self.base_image_var = tk.StringVar()
+        self._overrides_project = None
         ttk.Label(adv, text="Base image:").grid(row=1, column=0, sticky="w",
                                                 pady=(PAD, 0))
         ttk.Combobox(adv, textvariable=self.base_image_var, width=28,
@@ -1122,6 +1123,14 @@ class DeployTab(ttk.Frame):
         self._reattach()
 
     def _refresh(self) -> None:
+        # The Advanced overrides describe one project. Carried over to the
+        # next, an old Python base image chosen to rescue a Dash app made an
+        # R dashboard fail with "Rscript: not found".
+        if self.shared.project_dir != self._overrides_project:
+            self._overrides_project = self.shared.project_dir
+            for var in (self.framework_var, self.port_var, self.base_image_var):
+                var.set("")
+
         plan = self.shared.plan
         self.deploy_label.set(plan.publish_label)
         ready = plan.publish_ready and self.handle is None

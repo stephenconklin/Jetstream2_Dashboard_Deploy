@@ -278,6 +278,20 @@ if [[ "$ENTRY_STATE" == "ambiguous" ]]; then
   exit 1
 fi
 
+# A base image from the other language can never work, and fails late and
+# cryptically: an R build on python:*-slim gets through Shiny Server's install
+# and then dies on "Rscript: not found" three times over. Easy to hit from the
+# GUI, whose base-image field outlives a switch from a Python project to an R
+# one. Only the two families this tool suggests are checked, so a custom image
+# under any other name is still taken on trust.
+case "$FRAMEWORK:$BASE_IMAGE" in
+  r-shiny:python:*|dash:rocker/*|python-shiny:rocker/*|streamlit:rocker/*)
+    echo "BASE_IMAGE=$BASE_IMAGE is built for the other language, so it can't run" >&2
+    echo "this $FRAMEWORK dashboard. Clear the base image setting to use the default, and re-run." >&2
+    exit 1
+    ;;
+esac
+
 if [[ "$FRAMEWORK" != "r-shiny" ]]; then
   [[ "$NEEDS_REQS_FROM_UV" -eq 1 ]] && generate_requirements_from_uv
   require_file_or_fail "$PROJECT_DIR/requirements.txt" "$FRAMEWORK" \
