@@ -81,6 +81,19 @@ The page opens and shows a traceback, a red error box, or a broken plot.
 application never claims your dashboard is "working" — only that it's live.
 Shiny and Streamlit catch errors in your code and render them as a page.
 
+!!! tip "R Shiny's \"An error has occurred. Check your logs…\""
+
+    Shiny hides the real error from visitors and shows that sentence instead.
+    To see it: open the page so the error happens, then go to **4. Manage** →
+    **Show latest** and read the bottom, under *Your app's own output*. The
+    line starting `Warning: Error in` is the real message; the numbered lines
+    after it say which part of your app it came from (`output$map`, say).
+
+    Errors that appear only on the server, and not on your own computer, are
+    usually a package-version difference: your project has no `renv.lock`,
+    so the server installed the newest versions. Making a `renv.lock` on the
+    computer where it works pins the versions that work.
+
 ### `cannot open file 'data/...': No such file or directory`
 
 By far the most common. Your data isn't where your app is looking.

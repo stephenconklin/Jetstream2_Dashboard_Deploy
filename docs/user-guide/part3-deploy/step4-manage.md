@@ -196,6 +196,13 @@ It can take a few minutes on a large cache. The button greys out while it works.
 including errors and warnings. This is where an R traceback or a Python
 exception appears.
 
+For an **R Shiny** dashboard it comes in two parts. The top is Shiny Server's
+own output (starting up, listening). Below the line *Your app's own output,
+latest session* is what your R code printed during the most recent visit, and
+**that's where the real error behind a red "An error has occurred" message
+is**. Load the page that shows the error, press **Show latest**, and read the
+bottom.
+
 **Save to a file…** writes it out so you can attach or email it.
 
 What to look for:
