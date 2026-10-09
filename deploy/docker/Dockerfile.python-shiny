@@ -57,6 +57,11 @@ ARG PORT=8000
 ARG ENTRY_MODULE=app
 ENV PORT=${PORT}
 ENV ENTRY_MODULE=${ENTRY_MODULE}
+# Without this, Python holds print() output in a buffer when it isn't writing
+# to a terminal, so an app's own output reaches `docker logs` (and the
+# Manage tab's Show latest) late and in bursts. Set after the dependency
+# install so it doesn't invalidate that cached layer.
+ENV PYTHONUNBUFFERED=1
 EXPOSE ${PORT}
 
 # Exec form + `exec` so the app replaces the shell as PID 1 and receives

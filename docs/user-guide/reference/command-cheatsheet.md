@@ -65,7 +65,7 @@ project (non-`app.R` main file, data beside the code, a stale renv
 ./deploy/manage.sh health      # which layer is broken: app, nginx, or the public path
 ./deploy/manage.sh status      # running/stopped, and where it was deployed from
 ./deploy/manage.sh url         # the public address
-./deploy/manage.sh logs [N]    # recent output; for R Shiny, appends the newest worker log
+./deploy/manage.sh logs [N]    # recent output; for R Shiny, appends the last 3 worker logs
 ./deploy/manage.sh restart     # also starts a stopped dashboard
 ./deploy/manage.sh stop        # stays stopped, including across a reboot
 ./deploy/manage.sh disk        # free space and Docker's usage

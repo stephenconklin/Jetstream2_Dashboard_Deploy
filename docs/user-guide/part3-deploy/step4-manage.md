@@ -203,6 +203,11 @@ latest session* is what your R code printed during the most recent visit, and
 is**. Load the page that shows the error, press **Show latest**, and read the
 bottom.
 
+Above it, up to two *earlier session* sections show how the previous visits
+ended. The server starts your app afresh after everyone has closed it, and after
+it crashes. So if you reloaded the page after an error, the error is often in
+the earlier section just above, not in the latest one.
+
 **Save to a file…** writes it out so you can attach or email it.
 
 What to look for:

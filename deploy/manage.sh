@@ -363,21 +363,36 @@ cmd_logs() {
 
   # R Shiny: the container's own output above is only Shiny Server's. The
   # app's output — including the real error behind the browser's generic
-  # "An error has occurred" — goes to one log file per session inside the
-  # container (kept by `preserve_logs`). Show the newest, last, since the
-  # bottom of a log is where people look. Detected by the log folder rather
+  # "An error has occurred" — goes to one log file per R worker inside the
+  # container (kept by `preserve_logs`). Detected by the log folder rather
   # than the framework label, so containers deployed before labels existed
   # are covered too. `|| true` throughout: a stopped container can't be
   # exec'd into, and that mustn't turn a log request into a failure.
-  local latest
-  latest="$(docker exec "$CONTAINER_NAME" sh -c \
-    'ls -t /var/log/shiny-server/*.log 2>/dev/null | head -n 1' 2>/dev/null || true)"
-  if [[ -n "$latest" ]]; then
+  #
+  # The newest file alone is not enough. Shiny Server ends a worker once its
+  # last browser closes and starts a fresh one on the next visit, as it does
+  # after a crash — so by the time someone reloads to look, the newest file
+  # holds only the new worker's startup and the output they wanted is in the
+  # one before. Show the last few, oldest first, so the newest stays at the
+  # bottom where people look.
+  local recent f label lines total i=0
+  recent="$(docker exec "$CONTAINER_NAME" sh -c \
+    'ls -tr /var/log/shiny-server/*.log 2>/dev/null | tail -n 3' 2>/dev/null || true)"
+  total="$(printf '%s\n' "$recent" | grep -c . || true)"
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    i=$((i + 1))
+    # Earlier sessions only need their ending, which is where an error is.
+    if [[ "$i" -eq "$total" ]]; then
+      label="latest session"; lines="$n"
+    else
+      label="an earlier session"; lines=50
+    fi
     echo
-    echo "----- Your app's own output, latest session (${latest##*/}) -----"
+    echo "----- Your app's own output, $label (${f##*/}) -----"
     docker exec "$CONTAINER_NAME" sh -c \
-      "grep -v '^su: ' '$latest' | tail -n $n" 2>&1 || true
-  fi
+      "grep -v '^su: ' '$f' | tail -n $lines" 2>&1 || true
+  done <<< "$recent"
 }
 
 cmd_restart() {

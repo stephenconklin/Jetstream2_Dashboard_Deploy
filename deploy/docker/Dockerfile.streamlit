@@ -56,6 +56,11 @@ ARG PORT=8501
 ARG ENTRY_MODULE=streamlit_app.py
 ENV PORT=${PORT}
 ENV ENTRY_MODULE=${ENTRY_MODULE}
+# Without this, Python holds print() output in a buffer when it isn't writing
+# to a terminal, so an app's own output reaches `docker logs` (and the
+# Manage tab's Show latest) late and in bursts. Set after the dependency
+# install so it doesn't invalidate that cached layer.
+ENV PYTHONUNBUFFERED=1
 EXPOSE ${PORT}
 # (No HEALTHCHECK line here, but the container does get one: build_and_run.sh
 # attaches it at `docker run` time via --health-cmd, because the port is only
