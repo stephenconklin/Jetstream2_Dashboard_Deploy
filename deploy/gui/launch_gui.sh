@@ -57,6 +57,17 @@ or your user isn't in the 'docker' group:
     (then log out and back in)"
 fi
 
+# Make snap-packaged apps visible to xdg-open. Ubuntu 24.04 ships Firefox as
+# a snap, whose desktop entry lives in /var/lib/snapd/desktop; a login shell
+# adds that to XDG_DATA_DIRS (/etc/profile.d/apps-bin-path.sh), but the
+# Jetstream2 remote desktop session doesn't run one. Without it the desktop
+# has no handler for web links, and "Open dashboard" opened the page's
+# address in a text editor instead of a browser.
+SNAP_APPS=/var/lib/snapd/desktop
+if [[ -d "$SNAP_APPS" && ":${XDG_DATA_DIRS:-}:" != *":$SNAP_APPS:"* ]]; then
+  export XDG_DATA_DIRS="${XDG_DATA_DIRS:-/usr/local/share:/usr/share}:$SNAP_APPS"
+fi
+
 # PYTHONPATH so `python3 -m gui` resolves the package regardless of cwd.
 export PYTHONPATH="$GUI_DIR/..:${PYTHONPATH:-}"
 exec python3 "$GUI_DIR/__main__.py" "$@"

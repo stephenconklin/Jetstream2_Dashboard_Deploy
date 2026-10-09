@@ -799,9 +799,28 @@ def open_in_browser(url: str) -> None:
     desktop the module's heuristics can pick a browser that isn't installed,
     while xdg-open honours the desktop environment's own association.
     """
-    if shutil.which("xdg-open"):
-        subprocess.Popen(["xdg-open", url],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    else:  # macOS, for development
+    if not shutil.which("xdg-open"):  # macOS, for development
         subprocess.Popen(["open", url],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
+    if url.startswith(("http://", "https://")) and not _has_web_handler():
+        # With no registered browser, xdg-open doesn't fail — it hands the
+        # address to whatever it can find, which on the Jetstream2 desktop
+        # was a text editor. Launch a browser by name instead.
+        for browser in ("firefox", "x-www-browser", "sensible-browser"):
+            if shutil.which(browser):
+                subprocess.Popen([browser, url], stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, start_new_session=True)
+                return
+    subprocess.Popen(["xdg-open", url],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def _has_web_handler() -> bool:
+    """Whether the desktop has a default application for web links."""
+    try:
+        out = subprocess.run(["xdg-mime", "query", "default", "x-scheme-handler/http"],
+                             capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return bool(out.stdout.strip())
