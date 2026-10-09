@@ -43,6 +43,10 @@
 #   FRAMEWORK  - force framework selection (r-shiny|dash|python-shiny|streamlit),
 #                bypassing auto-detection entirely. Use this if detection
 #                guesses wrong or a project is genuinely ambiguous.
+#   ENTRY_FILE - name the app's main file (directly inside the project), e.g.
+#                ENTRY_FILE=cc_wq.R. The framework is inferred from it. An R
+#                main file needn't be called app.R: the build adds an app.R
+#                that runs it. Required when several files could be the app.
 #   BASE_IMAGE - override the base image. If unset:
 #                - R Shiny: auto-detected — rocker/geospatial:4.4.1 if the
 #                  project's .R/.Rmd files use sf/terra/raster/stars/rgdal/rgeos,
@@ -62,11 +66,20 @@
 #                (port 80 directly, or a loopback port behind nginx).
 #   DATA_DIR   - host path (e.g. a mounted Jetstream2 storage volume, typically
 #                under /media/volume/<volume-name>/...) bind-mounted into the
-#                container AND passed as a DATA_DIR container env var. Data is
-#                never baked into the image: if the project has a data/
-#                directory and DATA_DIR isn't set, you'll be prompted for the
-#                path interactively. Updating files under DATA_DIR takes
-#                effect on the next `docker restart` — no rebuild needed.
+#                container AND passed as a DATA_DIR container env var. If the
+#                project has a data/ directory and neither DATA_DIR nor
+#                BUNDLE_DATA is set, you'll be prompted interactively.
+#                Updating files under DATA_DIR takes effect on the next
+#                `docker restart` — no rebuild needed.
+#   DATA_SUBDIR - the folder name the app's code reads data from, relative to
+#                the app (default: data). DATA_DIR is mounted there, so a
+#                project whose code reads "Data/x.csv" or "inputs/x.csv" works
+#                without editing. A single folder name, not a path.
+#   BUNDLE_DATA - set to 1 to publish the project's own DATA_SUBDIR folder
+#                inside the image with the code, instead of mounting DATA_DIR.
+#                Simplest for small data; every data change then needs a
+#                re-publish. Data files kept loose alongside the code are
+#                always published with it — this only concerns the folder.
 # The directive below lets `shellcheck -x` resolve the two `source` lines
 # relative to this script rather than the caller's cwd. Without it the
 # linter can't follow them, and then reports every variable the sourced
@@ -80,6 +93,7 @@ set -euo pipefail
 TOOLING_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$TOOLING_DIR/lib/common.sh"
 source "$TOOLING_DIR/lib/detect_framework.sh"
+source "$TOOLING_DIR/lib/check_code.sh"
 
 DRY_RUN=0
 PORCELAIN=0
@@ -102,6 +116,11 @@ if [[ "$PORCELAIN" -eq 1 && "$DRY_RUN" -eq 0 ]]; then
 fi
 
 PROJECT_DIR="${POSITIONAL[0]:-$TOOLING_DIR/app}"
+# Without a trailing slash, so "$PROJECT_DIR/$file" and the paths `find`
+# prints for it are spelled the same way (tab completion adds one).
+while [[ "$PROJECT_DIR" == */ && "$PROJECT_DIR" != / ]]; do
+  PROJECT_DIR="${PROJECT_DIR%/}"
+done
 IMAGE_NAME="${POSITIONAL[1]:-dashboard-app}"
 CONTAINER_NAME="$IMAGE_NAME"
 
@@ -122,11 +141,27 @@ if [[ ! "$IMAGE_NAME" =~ ^[a-z0-9]+([._-]+[a-z0-9]+)*$ ]]; then
   exit 1
 fi
 DATA_DIR="${DATA_DIR:-}"
+DATA_SUBDIR="${DATA_SUBDIR:-data}"
+BUNDLE_DATA="${BUNDLE_DATA:-0}"
+# One folder name directly inside the app: it becomes both a path inside the
+# container and half of a `docker run -v host:target` argument, so no
+# separators, no colon (the -v delimiter), and nothing that escapes upward.
+if [[ ! "$DATA_SUBDIR" =~ ^[A-Za-z0-9._\ -]+$ || "$DATA_SUBDIR" == "." || "$DATA_SUBDIR" == ".." ]]; then
+  echo "DATA_SUBDIR='$DATA_SUBDIR' must be a single folder name (letters, digits, spaces," >&2
+  echo "dots, dashes, underscores) — the name your code uses, e.g. data or Data." >&2
+  exit 1
+fi
+if [[ -n "$DATA_DIR" && "$BUNDLE_DATA" == "1" ]]; then
+  echo "DATA_DIR and BUNDLE_DATA=1 were both set — choose one: mount the data from" >&2
+  echo "DATA_DIR, or publish the project's own $DATA_SUBDIR/ folder with the app." >&2
+  exit 1
+fi
 FRAMEWORK="${FRAMEWORK:-}"
-ENTRY_FILE=""
+ENTRY_FILE="${ENTRY_FILE:-}"
 ENTRY_POINT_DESC=""
 
-detect_framework   # sets FRAMEWORK, ENTRY_POINT_DESC, ENTRY_FILE (Python only)
+# Sets FRAMEWORK, ENTRY_POINT_DESC, ENTRY_FILE, ENTRY_STATE, ENTRY_CANDIDATES.
+detect_framework
 
 # Reading the proxy state file is a read, so this belongs above the dry-run
 # gate — and it has to be, since --dry-run reports where the app would be
@@ -203,10 +238,17 @@ else
 fi
 
 HAS_DATA_DIR_IN_PROJECT=0
-[[ -d "$PROJECT_DIR/data" ]] && HAS_DATA_DIR_IN_PROJECT=1
+[[ -d "$PROJECT_DIR/$DATA_SUBDIR" ]] && HAS_DATA_DIR_IN_PROJECT=1
+
+# Sizes in KB, for deciding whether data can reasonably travel inside the
+# image (sets APP_FOLDER_KB, DATA_SUBDIR_KB).
+measure_project_size
 
 HAS_APT_TXT=0
 [[ -s "$PROJECT_DIR/apt.txt" ]] && HAS_APT_TXT=1
+
+# Sets CODE_NOTES / CODE_NOTE_COUNT. Advisory only; never fails.
+check_project_code
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
   if [[ "$PORCELAIN" -eq 1 ]]; then
@@ -218,6 +260,23 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
 fi
 
 # --- Past this point, side effects are allowed. ---------------------------
+
+# Up front, so they're the first thing in the log rather than buried under
+# a 20-minute build — and so a crash at startup can be matched to them.
+if [[ "$CODE_NOTE_COUNT" -gt 0 ]]; then
+  echo "Things worth checking in your code (these don't stop the build):" >&2
+  printf '%s' "$CODE_NOTES" | sed 's/^/  /' >&2
+  echo >&2
+fi
+
+# Reported, not fatal, under --dry-run (that's how the GUI learns it has to
+# ask), but a real deploy must not guess which of several apps to publish.
+if [[ "$ENTRY_STATE" == "ambiguous" ]]; then
+  echo "More than one file in $PROJECT_DIR could be the dashboard:" >&2
+  printf '%s\n' "$ENTRY_CANDIDATES" | tr '/' '\n' | sed 's/^/  /' >&2
+  echo "Set ENTRY_FILE=<one of the above> to say which one to publish, and re-run." >&2
+  exit 1
+fi
 
 if [[ "$FRAMEWORK" != "r-shiny" ]]; then
   [[ "$NEEDS_REQS_FROM_UV" -eq 1 ]] && generate_requirements_from_uv
@@ -259,6 +318,26 @@ esac
 # interactive prompt before a long build rather than after it.
 resolve_data_dir
 
+# The one data mistake that's detectable before building: code reading
+# data/… with no data/ folder to publish and nothing mounted there. Not fatal
+# (the scan is a regex, and the app may create the folder itself), but it is
+# the most common way a "successful" publish serves a crash.
+if [[ -z "$DATA_DIR" && ! -d "$PROJECT_DIR/$DATA_SUBDIR" && "$DATA_DIR_REFS" -gt 0 ]]; then
+  echo "Warning: your code reads $DATA_DIR_REFS file(s) from $DATA_SUBDIR/, but this project has no" >&2
+  echo "$DATA_SUBDIR/ folder and DATA_DIR isn't set, so those files won't exist inside the app." >&2
+  echo "Set DATA_DIR=/path/to/your/data (usually a folder on your storage volume)." >&2
+fi
+
+# Everything not mounted travels inside the image — loose data files next to
+# the code included. Worth saying out loud when that's a lot.
+PUBLISHED_KB="$APP_FOLDER_KB"
+[[ -n "$DATA_DIR" ]] && PUBLISHED_KB=$(( APP_FOLDER_KB - DATA_SUBDIR_KB ))
+if [[ "$PUBLISHED_KB" -gt "$BUNDLE_WARN_KB" ]]; then
+  echo "Warning: $(human_kb "$PUBLISHED_KB") of files will be published inside the app, and every" >&2
+  echo "re-publish copies all of it again. Large data belongs on a storage volume:" >&2
+  echo "move it into a folder there and mount it with DATA_DIR (step 2 in the app)." >&2
+fi
+
 resolve_build_platform
 
 if [[ "$FRAMEWORK" == "r-shiny" && "$HAS_RENV_LOCK" -eq 0 ]]; then
@@ -268,7 +347,7 @@ fi
 build_image
 
 INTERNAL_PORT="${CONTAINER_PORT:-$(container_port_for_framework "$FRAMEWORK")}"
-MOUNT_TARGET="$(container_data_mount_target_for_framework "$FRAMEWORK")"
+MOUNT_TARGET="$(container_data_mount_target_for_framework "$FRAMEWORK" "$DATA_SUBDIR")"
 
 run_container
 run_smoke_test

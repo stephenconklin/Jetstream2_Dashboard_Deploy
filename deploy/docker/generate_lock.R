@@ -89,9 +89,15 @@ if (length(missing) > 0) {
   stop("Failed to install required package(s) while generating renv.lock: ", paste(missing, collapse = ", "))
 }
 
+# Snapshot from every library on the path, not just lib_dir. A heavier
+# BASE_IMAGE (rocker/geospatial ships shiny, sf, dplyr, leaflet and most of
+# their dependencies) already satisfies most of `required`, so the loop above
+# only installs the remainder into lib_dir — and a snapshot restricted to
+# lib_dir then reports every package the image provided as "not installed"
+# and aborts, failing every geospatial project that arrives without a lockfile.
 renv::snapshot(
   project = project_dir,
-  library = lib_dir,
+  library = .libPaths(),
   lockfile = file.path(project_dir, "renv.lock"),
   packages = required,
   prompt = FALSE

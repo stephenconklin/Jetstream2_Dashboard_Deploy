@@ -5,11 +5,9 @@
 This tab answers one question: **where is your dashboard's code?** It offers
 three ways, and once you've answered it immediately tells you what it found.
 
-<figure class="shot shot--todo">
-  <div class="shot__box">
-    <span class="shot__label">Screenshot needed</span>
-    <span class="shot__file">assets/screenshots/p3-tab1-empty.png</span>
-  </div>
+<figure class="shot">
+  <img src="../../assets/screenshots/p3-tab1-empty.png"
+       alt="Tab 1 with the three radio options — already on this server, download from Git, or a .zip file — and nothing selected yet.">
   <figcaption>Tab 1 with the three radio options — already on this server,
   download from Git, or a .zip file — and nothing selected yet.</figcaption>
 </figure>
@@ -30,11 +28,9 @@ three ways, and once you've answered it immediately tells you what it found.
     The repository is cloned into your home folder on the instance and selected
     automatically.
 
-    <figure class="shot shot--todo">
-      <div class="shot__box">
-        <span class="shot__label">Screenshot needed</span>
-        <span class="shot__file">assets/screenshots/p3-tab1-git.png</span>
-      </div>
+    <figure class="shot">
+      <img src="../../assets/screenshots/p3-tab1-git.png"
+           alt="Tab 1 with the Git option selected, showing the Address field with a repository URL entered.">
       <figcaption>Tab 1 with the Git option selected, showing the Address field
       with a repository URL entered.</figcaption>
     </figure>
@@ -56,11 +52,9 @@ three ways, and once you've answered it immediately tells you what it found.
     2. Select **I have a .zip file**
     3. Click **Choose…**, pick the file, then click **Unpack it**
 
-    <figure class="shot shot--todo">
-      <div class="shot__box">
-        <span class="shot__label">Screenshot needed</span>
-        <span class="shot__file">assets/screenshots/p3-tab1-zip.png</span>
-      </div>
+    <figure class="shot">
+      <img src="../../assets/screenshots/p3-tab1-zip.png"
+           alt="Tab 1 with the zip option selected, a file chosen, and the Unpack it button.">
       <figcaption>Tab 1 with the zip option selected, a file chosen, and the
       Unpack it button.</figcaption>
     </figure>
@@ -76,22 +70,20 @@ three ways, and once you've answered it immediately tells you what it found.
 === "Already on this server"
 
     Use this if you copied your project across some other way — `rsync`,
-    Globus, a `git clone` from a terminal, or a previous session.
+    a `git clone` from a terminal, or a previous session.
 
     1. Select **It's already on this server**
     2. Click **Browse…** and find the folder, or type the path
     3. Click **Use this folder**
 
-    <figure class="shot shot--todo">
-      <div class="shot__box">
-        <span class="shot__label">Screenshot needed</span>
-        <span class="shot__file">assets/screenshots/p3-tab1-browse.png</span>
-      </div>
+    <figure class="shot">
+      <img src="../../assets/screenshots/p3-tab1-browse.png"
+           alt="Tab 1 with the browse option, showing a folder path selected.">
       <figcaption>Tab 1 with the browse option, showing a folder path selected.</figcaption>
     </figure>
 
-    Pick the folder that **contains** `app.R` / `app.py`, not the folder above
-    it and not the file itself.
+    Pick the folder that **contains** your dashboard's code, not the folder
+    above it and not the file itself.
 
 ---
 
@@ -100,59 +92,101 @@ three ways, and once you've answered it immediately tells you what it found.
 However you got here, the application immediately inspects the project and
 reports back:
 
-<figure class="shot shot--todo">
-  <div class="shot__box">
-    <span class="shot__label">Screenshot needed</span>
-    <span class="shot__file">assets/screenshots/p3-tab1-detected.png</span>
-  </div>
-  <figcaption>Tab 1 after a successful selection, showing the detected
-  framework, the entry point, and the note about the data folder.</figcaption>
+<figure class="shot">
+  <img src="../../assets/screenshots/p3-tab1-detected.png"
+       alt="Tab 1 after a successful selection: the detected framework, and the 'Your dashboard's main file' box with its dropdown.">
+  <figcaption>Tab 1 after a successful selection: the detected framework, and
+  the "Your dashboard's main file" box with its dropdown.</figcaption>
 </figure>
 
 ```
-Found a r-shiny dashboard in /home/exouser/salmon-dashboard
-Entry point: app.R
+Found a r-shiny dashboard in /home/exouser/water-quality
 
-This project includes a data/ folder, so choose where that data lives
-on this server in step 2.
+Next, check step 2: it asks where your dashboard's data files are.
 ```
 
-**Check all three lines.** This takes five seconds and catches most of the
-problems that would otherwise appear 20 minutes into a build.
+**Check two things.** It takes five seconds and catches most of the problems
+that would otherwise show up 20 minutes into a build.
 
-| Line | What you're checking |
+| What | What you're checking |
 |---|---|
-| **Framework** | Is it the one you expect? |
-| **Entry point** | Is that actually your app's starting file? |
-| **The note at the end** | Does it match what you know about your data? |
+| **The framework** | Is it the one you expect? |
+| **The main file** | Is that the file you run to start your dashboard? |
 
-That last line is worth dwelling on. It says one of two things:
+### Your dashboard's main file
 
-> *"This project includes a `data/` folder, so choose where that data lives in
-> step 2."*
+This is the file you'd open and run to start your dashboard — in RStudio,
+the one you press **Run App** on. It **doesn't need any particular name**:
+`cc_water_quality.R` works just as well as `app.R`.
 
-You **must** answer step 2. The Publish button stays disabled until you do.
+<figure class="shot">
+  <img src="../../assets/screenshots/p3-tab1-main-file.png"
+       alt="The 'Your dashboard's main file' box with the dropdown open, listing two candidate files.">
+  <figcaption>The "Your dashboard's main file" box with the dropdown open,
+  listing two candidate files.</figcaption>
+</figure>
 
-> *"This project doesn't include a `data/` folder. If your dashboard reads data
-> files kept somewhere else — on your storage volume, say — point step 2 at
-> them. Otherwise go straight to step 3."*
+- **One likely file:** it's picked for you. If it isn't called `app.R`, a note
+  says so. That's fine: when you publish, a one-line `app.R` that runs your
+  file is added to the published copy. Nothing in your folder changes.
+- **Several likely files:** nothing is picked, and **Publish** stays disabled
+  until you choose one from the dropdown. Old versions are the usual cause
+  (`app_v2.R`, `app_old.R`).
+- **The wrong file was picked:** choose a different one from the dropdown, or
+  use **Choose another file…** to pick any `.R` or `.py` file in the folder.
 
-You **may** need step 2 anyway, and this is the case people get wrong. If you
-moved your data onto the volume in Part 2 — which is the recommended thing to
-have done — then you have no `data/` folder *and* you definitely need step 2.
-The application can't tell those two situations apart, so you have to.
+R Shiny files that *build* `ui` and `server` but never call `shinyApp()` can
+be chosen too. The published copy finishes the job for you.
+
+### Worth checking in your code
+
+If your code does something that works on your own computer but usually not
+on a server, a box appears listing each case with its file and line number:
+
+<figure class="shot">
+  <img src="../../assets/screenshots/p3-tab1-code-notes.png"
+       alt="The 'Worth checking in your code' box listing two notes — a setwd() call and a file name whose capitals don't match.">
+  <figcaption>The "Worth checking in your code" box listing two notes — a
+  setwd() call and a file name whose capitals don't match.</figcaption>
+</figure>
+
+| It says | Why it matters on the server |
+|---|---|
+| uses `"C:/…"`, `"/Users/…"`, `"~/…"` | That's a location on your own computer. Put the file in your app folder and use just its name |
+| calls `setwd()` | That folder doesn't exist on the server, and the app already runs from its own folder |
+| calls `install.packages()` | Publishing installs your packages. Doing it again on every start is slow and can fail |
+| calls `runApp()` | The server starts your app itself. A second `runApp()` stops it from ever finishing starting up |
+| reads `"stations.csv"`, but the file is called `"Stations.csv"` | Mac and Windows ignore capital letters in file names. The server doesn't |
+| reads a file that isn't in your app folder | It won't be on the server either, unless it's in your data folder (step 2) |
+
+These are **advice, not errors**. They never stop you publishing, and an
+occasional one may not apply (a line in a data-preparation script the
+dashboard never runs, say). But if your dashboard shows an error after
+publishing, start with this list.
+
+A few things are fixed automatically and don't need you at all. They're
+fixed in the published copy only, never in your folder:
+
+- an `.Rprofile` that activates `renv` (the package library it points to
+  isn't on the server — packages are installed for you instead)
+- RStudio's leftovers (`.RData`, `.Rhistory`, `.Rproj.user/`, `rsconnect/`)
+  are left out
 
 ---
 
 ## If it can't recognise your project
 
-An error dialog appears with the script's own explanation. The three you're
+An error dialog appears with the script's own explanation. The ones you're
 likely to see:
 
-??? failure "\"No app.R, ui.R/server.R, ... or a recognizable app.py found\""
+??? failure "\"Couldn't find a dashboard's main file\""
 
-    The starting file isn't where it's looking, or doesn't contain a
-    recognisable signal.
+    Nothing in the folder looks like a dashboard to the automatic check.
+    If the folder does contain `.R` or `.py` files, the application offers to
+    let you **choose the main file yourself** — say yes and pick the file you
+    run to start your dashboard.
+
+    Otherwise:
 
     - Check you selected the folder **containing** the app file, not its parent
     - Check the file is at the top level, not in `src/` or `inst/`
@@ -162,16 +196,23 @@ likely to see:
     If your app lives in a subfolder, add a shim — see
     [the starting file must be at the top level](../part2-prepare/entry-point.md#the-starting-file-must-be-at-the-top-level).
 
-??? failure "\"Ambiguous framework\" — signals found in more than one file"
+??? failure "\"That file can't be used\""
 
-    The error names each file and the framework signal it found in each. Almost
-    always a leftover file from an earlier version.
+    The file you chose as the main file was turned down, with the reason.
+    The most common one: the folder also has an `app.R`, which the server
+    always runs first. Choose `app.R`, or rename it (to `old_app.R`, say) so
+    the file you chose is the one that runs.
 
-    Delete or rename the one you don't want deployed, then select the folder
-    again. Renaming to `old_app.py.bak` is enough.
+??? failure "\"Multiple framework signals detected\" — Python files for different frameworks"
 
-    If the ambiguity is genuine, you can force the choice on
-    [tab 3 under Advanced](step3-publish.md#advanced-options).
+    The error names each file and the framework signal it found in each —
+    say, a Dash `app.py` next to an old Streamlit script. Almost always a
+    leftover from an earlier version.
+
+    Say yes when the application offers to let you choose the main file, and
+    pick the right one. Or delete or rename the one you don't want deployed
+    and select the folder again. Renaming to
+    `old_app.py.bak` is enough.
 
 ??? failure "\"no requirements.txt was found\""
 

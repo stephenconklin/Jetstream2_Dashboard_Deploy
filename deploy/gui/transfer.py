@@ -4,18 +4,19 @@ The GUI implements none of these transfers. It explains each one, opens the
 right tool, and — the part that actually matters — verifies afterwards that
 the files arrived where the deployment will look for them.
 
-Four routes are offered because researchers arrive with very different
-setups: some live in GitHub, some have 200 GB on an institutional store,
-some have a folder on a laptop and have never opened a terminal. Picking
-one route for everyone would exclude a lot of people.
+Three routes are offered because researchers arrive with very different
+setups: some keep data in cloud storage, some are comfortable with a
+terminal, some have a folder on a laptop and have never opened one. Picking
+one route for everyone would exclude a lot of people. (Globus was offered
+once and dropped: it needs an endpoint set up on each side, which is more
+than this audience should have to do, and data big enough to need it is
+bigger than this tool sets out to handle.)
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-
-GLOBUS_URL = "https://app.globus.org/file-manager"
 
 CLOUD_SERVICES = [
     ("Google Drive", "https://drive.google.com"),
@@ -69,21 +70,9 @@ def scp_command(public_ip: str, username: str, destination: str) -> str:
 
 
 def build_routes(public_ip: str, username: str, destination: str) -> list[Route]:
-    """The four routes, with real values filled in where possible."""
+    """The three routes, with real values filled in where possible."""
     dest = destination or "/media/volume/YOUR-VOLUME"
     return [
-        Route(
-            key="globus",
-            title="Globus  (best for large datasets)",
-            blurb=(
-                "Globus transfers in the background, resumes automatically if "
-                "the connection drops, and is built for research data. Log in "
-                "with your institution, then move files to this instance's "
-                "endpoint. Nothing to install on your laptop."),
-            best_for="Tens of GB and up, or anything you'd hate to restart.",
-            links=[("Open Globus", GLOBUS_URL)],
-            folder=dest,
-        ),
         Route(
             key="cloud",
             title="Download from cloud storage",
@@ -102,7 +91,7 @@ def build_routes(public_ip: str, username: str, destination: str) -> list[Route]
                 "Run this on YOUR computer — not here — replacing ~/mydata "
                 "with the folder you want to send. It will ask for your "
                 "instance password or use your SSH key."),
-            best_for="A folder on your laptop, when you're comfortable with a terminal.",
+            best_for="A folder on your laptop, when you're comfortable with a terminal. Resumes if interrupted.",
             command=rsync_command(public_ip, username, dest),
             folder=dest,
         ),

@@ -36,11 +36,13 @@ Drop in a project. It reads your code to work out which of the four frameworks y
 |  |  |
 |---|---|
 | 🔍 **Works out your framework from your code** | Not from filenames — `app.py` could be three different things. It reads the imports. |
+| 🧩 **Takes your project as it is** | Your main file doesn't need to be called `app.R`, your spreadsheets can sit next to your code, and a stale `.Rprofile` won't crash it. If several files could be the app, it asks. |
+| 🔎 **Checks your code for laptop-only habits** | Paths to your own disk, `setwd()`, file names whose capitals don't match — flagged with file and line before you publish. |
 | 📦 **Handles the dependency mess** | Generates a missing `renv.lock` for you. Detects geospatial R projects and switches to a GDAL-ready base image automatically. |
-| 🗄️ **Keeps data out of the image** | Your dataset lives on a storage volume and is attached at run time — so updating it takes a restart, not a rebuild. |
+| 🗄️ **Small data travels with the app; big data stays put** | A few files next to your code are published with it. A large dataset lives on a storage volume and is attached at run time — so updating it takes a restart, not a rebuild. |
 | 🌐 **Production web server included** | nginx in front, with WebSockets, gzip, rate limiting, a real maintenance page, and TLS when you have a domain name. |
 | ❤️ **Stays up** | Restarts on crash, and a watchdog catches the harder failure — alive but no longer answering. Survives reboots. |
-| 🖥️ **No terminal required** | A desktop application walks researchers through it. It's a thin front end over the same scripts, so nothing is hidden. |
+| 🖥️ **No terminal required** | A desktop application walks researchers through it step by step, always showing what's live and what's left to do. It's a thin front end over the same scripts, so nothing is hidden. |
 
 <div align="center">
   <img src="docs/assets/readme/02-published-dashboard.svg" alt="A published dashboard live in a browser at a fixed IP address" width="100%">
@@ -70,11 +72,11 @@ Two scripts with one clean split between them. **`bootstrap.sh` provisions the h
                     └───────────────────┬──────────────────────────┘
                                         │
                     ┌───────────────────▼──────────────────────────┐
-                    │  your data, mounted from a storage volume    │
+                    │  large data, mounted from a storage volume   │
                     └──────────────────────────────────────────────┘
 ```
 
-Your code is baked into the image, so it's self-contained and versioned. Your data is not, so you can update it without rebuilding. A health check feeds a watchdog that restarts the container if it stops answering.
+Your code — and any small data kept beside it — is baked into the image, so it's self-contained and versioned. Large data on a storage volume is not, so you can update it without rebuilding. A health check feeds a watchdog that restarts the container if it stops answering.
 
 <div align="center">
   <img src="docs/assets/readme/03-manage-tab.svg" alt="The Manage tab, showing health, storage, and the app's log" width="100%">
@@ -123,7 +125,7 @@ Try it against a bundled example first — one per framework, in [`examples/`](e
 |---|---|
 | 📖 **[User guide](https://jetstream2-dashboard-deploy.readthedocs.io/)** | Start here. Creating the instance and storage volume, preparing your project, publishing it, keeping it running. Assumes no Docker and no terminal. |
 | 🔧 **[Deployment reference](docs/user-guide/reference/deployment.md)** | Every environment variable, health verdict, and design decision, with the reasoning. |
-| 📤 **[Getting files onto the instance](docs/user-guide/reference/getting-your-files-onto-the-instance.md)** | Git, drag-and-drop, rsync, cloud storage, Globus. |
+| 📤 **[Getting files onto the instance](docs/user-guide/reference/getting-your-files-onto-the-instance.md)** | Git, drag-and-drop, rsync, cloud storage. |
 | ⌨️ **[Command line equivalents](docs/user-guide/reference/command-line.md)** | Every button in the application, and the command it runs. |
 
 <details>
@@ -138,7 +140,8 @@ deploy/
 ├── lint.sh                  # shellcheck + python syntax check
 ├── lib/
 │   ├── common.sh            #   shared build/run/retry/smoke-test/data-dir logic
-│   ├── detect_framework.sh  #   framework auto-detection
+│   ├── detect_framework.sh  #   framework and main-file detection
+│   ├── check_code.sh        #   advisory check for laptop-only habits in the code
 │   ├── proxy.sh             #   where the container binds, and how it's health-checked
 │   ├── disk.sh              #   free space, and reclaiming it
 │   └── persist_mount.sh     #   root-only: make a data volume survive reboot
@@ -148,7 +151,8 @@ deploy/
 ├── desktop/                 # launcher icon + researcher image build script
 └── app/                     # drop-in slot for the project to deploy (gitignored)
 
-examples/                    # one minimal self-test app per framework
+examples/                    # one minimal self-test app per framework, plus a
+                             #   researcher-style R app (odd file name, data beside code)
 docs/user-guide/             # the guide, published to Read the Docs
 ```
 

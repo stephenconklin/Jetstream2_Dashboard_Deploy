@@ -69,6 +69,8 @@ class ProjectInfo:
     framework: str = ""
     entry_file: str = ""
     entry_point_desc: str = ""
+    entry_state: str = ""
+    entry_candidates: str = ""
     base_image: str = ""
     deps_state: str = ""
     uses_geospatial: bool = False
@@ -76,18 +78,69 @@ class ProjectInfo:
     has_apt_txt: bool = False
     container_port: str = ""
     data_mount_target: str = ""
+    data_subdir: str = ""
+    app_folder_kb: str = ""
+    data_subdir_kb: str = ""
+    bundle_warn_kb: str = ""
+    data_dir_refs: str = ""
     extra: dict[str, str] = field(default_factory=dict)
 
-    @property
-    def needs_data_dir(self) -> bool:
-        """True when a deploy cannot proceed without the user picking a path.
+    @staticmethod
+    def _kb(value: str) -> int:
+        try:
+            return int(value)
+        except ValueError:
+            return 0
 
-        ``resolve_data_dir()`` in common.sh prompts on a TTY, but the GUI's
-        subprocess has none, so it hard-fails instead. That guard is what
-        makes this safe to rely on: the failure is clean and catchable
-        rather than a hang.
+    @property
+    def app_kb(self) -> int:
+        """Size of what publishing would copy into the image, in KB."""
+        return self._kb(self.app_folder_kb)
+
+    @property
+    def data_kb(self) -> int:
+        """Size of the project's own data folder (data_subdir), in KB."""
+        return self._kb(self.data_subdir_kb)
+
+    @property
+    def reads_missing_data_dir(self) -> bool:
+        """The code reads data_subdir/… but the project has no such folder.
+
+        So publishing it as-is would start an app that can't find its files:
+        that data has to be attached from somewhere else.
         """
-        return self.has_data_dir
+        return not self.has_data_dir and self._kb(self.data_dir_refs) > 0
+
+    @property
+    def too_big_to_bundle(self) -> bool:
+        """Whether the shell would warn about publishing this much inside the app."""
+        limit = self._kb(self.bundle_warn_kb)
+        return bool(limit) and self.app_kb > limit
+
+    @property
+    def candidates(self) -> list[str]:
+        """Every file that could be the app's main file.
+
+        The shell separates them with "/", the one character a file name
+        cannot contain, so this split is exact.
+        """
+        return [c for c in self.entry_candidates.split("/") if c]
+
+    @property
+    def code_notes(self) -> list[str]:
+        """The shell's advisory code-check notes, "file:line: message".
+
+        Sent as numbered ``code_note_N`` keys (porcelain values are single
+        lines), so they land in ``extra`` and are put back in order here.
+        """
+        notes = [(int(k[len("code_note_"):]), v) for k, v in self.extra.items()
+                 if k.startswith("code_note_") and k[len("code_note_"):].isdigit()]
+        return [v for _, v in sorted(notes)]
+
+    @property
+    def needs_entry_choice(self) -> bool:
+        """Several files could be the app; a deploy refuses to guess."""
+        return self.entry_state == "ambiguous"
 
     @property
     def deps_ok(self) -> bool:
@@ -140,7 +193,9 @@ def _run(cmd: list[str], timeout: int = 120) -> subprocess.CompletedProcess[str]
 def inspect_project(project_dir: str | os.PathLike[str],
                     framework: str = "",
                     container_port: str = "",
-                    base_image: str = "") -> ProjectInfo:
+                    base_image: str = "",
+                    entry_file: str = "",
+                    data_subdir: str = "") -> ProjectInfo:
     """Ask the shell what it would do with this project. No side effects.
 
     ``--dry-run`` is guaranteed read-only: it never starts a container,
@@ -154,6 +209,10 @@ def inspect_project(project_dir: str | os.PathLike[str],
         env_prefix += [f"CONTAINER_PORT={container_port}"]
     if base_image:
         env_prefix += [f"BASE_IMAGE={base_image}"]
+    if entry_file:
+        env_prefix += [f"ENTRY_FILE={entry_file}"]
+    if data_subdir:
+        env_prefix += [f"DATA_SUBDIR={data_subdir}"]
 
     cmd = ["env", *env_prefix, str(BUILD_AND_RUN),
            "--dry-run", "--porcelain", str(project_dir)]
@@ -248,7 +307,10 @@ def start_deploy(project_dir: str | os.PathLike[str],
                  data_dir: str = "",
                  framework: str = "",
                  container_port: str = "",
-                 base_image: str = "") -> RunHandle:
+                 base_image: str = "",
+                 entry_file: str = "",
+                 data_subdir: str = "",
+                 bundle_data: bool = False) -> RunHandle:
     """Launch a deploy detached from this process, returning its log handle.
 
     ``data_dir`` must be supplied whenever the project has a ``data/``
@@ -274,6 +336,12 @@ def start_deploy(project_dir: str | os.PathLike[str],
         env["CONTAINER_PORT"] = container_port
     if base_image:
         env["BASE_IMAGE"] = base_image
+    if entry_file:
+        env["ENTRY_FILE"] = entry_file
+    if data_subdir:
+        env["DATA_SUBDIR"] = data_subdir
+    if bundle_data:
+        env["BUNDLE_DATA"] = "1"
 
     cmd = [str(RUN_DETACHED), str(log_path), str(exit_path),
            str(BUILD_AND_RUN), str(project_dir)]
@@ -422,9 +490,13 @@ class Deployment:
     project_dir: str = ""
     project_dir_exists: bool = False
     data_dir: str = ""
+    data_subdir: str = ""
     framework: str = ""
+    entry_file: str = ""
     deployed_at: str = ""
     state: str = "absent"
+    health: str = "unknown"
+    url: str = ""
 
     @property
     def can_restore(self) -> bool:
@@ -441,9 +513,13 @@ def deployment() -> Deployment:
         project_dir=st.get("project_dir", ""),
         project_dir_exists=st.get("project_dir_exists") == "1",
         data_dir=st.get("data_dir", ""),
+        data_subdir=st.get("data_subdir", ""),
         framework=st.get("framework", ""),
+        entry_file=st.get("entry_file", ""),
         deployed_at=st.get("deployed_at", ""),
         state=st.get("state", "absent"),
+        health=st.get("health", "unknown"),
+        url=st.get("url", ""),
     )
 
 

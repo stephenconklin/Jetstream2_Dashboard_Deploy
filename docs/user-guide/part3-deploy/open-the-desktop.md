@@ -10,7 +10,7 @@ to Exosphere from.
 
 ## 1. Open it from Exosphere
 
-Go to [exosphere.jetstream-cloud.org](https://exosphere.jetstream-cloud.org/),
+Go to [jetstream2.exosphere.app](https://jetstream2.exosphere.app/),
 click your instance's name, and find **Web Desktop** among the actions.
 
 <figure class="shot shot--todo">
@@ -55,11 +55,9 @@ If it doesn't appear at all, the icon is also in the applications menu under
 
 ## 3. What you'll see
 
-<figure class="shot shot--todo">
-  <div class="shot__box">
-    <span class="shot__label">Screenshot needed</span>
-    <span class="shot__file">assets/screenshots/p3-first-open.png</span>
-  </div>
+<figure class="shot">
+  <img src="../../assets/screenshots/p3-first-open.png"
+       alt="The application on first open, on tab 1, with nothing selected yet.">
   <figcaption>The application on first open, on tab 1, with nothing selected
   yet.</figcaption>
 </figure>

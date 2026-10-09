@@ -18,7 +18,8 @@ can rebuild the conditions it needs. Three things have to be true.
 -   :material-file-tree: **1. The right file layout**
 
     The tooling has to be able to find your app's starting file, and work out
-    which framework it is.
+    which framework it is. Usually this needs no changes — any file name
+    works — but it's worth a five-minute check.
 
     → [Check your file layout](entry-point.md)
 
@@ -31,8 +32,9 @@ can rebuild the conditions it needs. Three things have to be true.
 
 -   :material-database-arrow-right: **3. Data paths that survive the move**
 
-    Your data ends up somewhere different on the server. Your code has to read
-    it in a way that still works.
+    Small data kept beside your code travels with it and just works. Large data
+    lives on a storage volume, and your code has to read it in a way that
+    still works there.
 
     → [How your app finds its data](data-paths.md)
 
@@ -58,7 +60,10 @@ build that fails minutes in, or worse, one that succeeds and installs something
 subtly different. So for Dash, Python Shiny and Streamlit a `requirements.txt`
 is **required**, and the deployment stops with a clear message if it's missing.
 
-For **data paths**, only you know which strings in your code are file paths.
+For **data paths**, the tooling checks what it can — paths to your own
+computer, `setwd()`, file names whose capitals don't match — and lists them
+when you select your project. But only you know which strings in your code
+are file paths, and which data is meant to come from where.
 
 ---
 

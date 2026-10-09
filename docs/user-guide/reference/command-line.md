@@ -20,6 +20,8 @@ cd ~/Jetstream2_Dashboard_Deploy
 | The same, as parseable `key=value` | `./deploy/build_and_run.sh --dry-run --porcelain /path/to/project` |
 | **Download** from a Git address | `git clone <url> ~/my-dashboard` |
 | **Unpack it** from a `.zip` | `unzip ~/my-dashboard.zip -d ~/` |
+| Choosing the **Main file** | `ENTRY_FILE=water_quality.R ./deploy/build_and_run.sh --dry-run /path/to/project` |
+| **Worth checking in your code** | The `Code check:` lines of the dry run |
 
 The dry run is strictly read-only: it starts nothing, writes nothing into your
 project, and reports a missing dependency file rather than failing on it.
@@ -30,6 +32,9 @@ project, and reports a missing dependency file rather than failing on it.
 
 | In the application | On the command line |
 |---|---|
+| *In my app folder* | nothing — or `BUNDLE_DATA=1` if the project has a `data/` folder |
+| *In a separate folder on this server* | `DATA_DIR=/media/volume/<name>` |
+| **Folder name** your code uses | `DATA_SUBDIR=Inputs` |
 | The list of locations | `lsblk -J -b` and `findmnt -J -b` |
 | **Look in that folder now** | `ls -lh /media/volume/<name>/` · `du -sh` · `df -h` |
 | **Make this permanent** | `sudo /usr/local/libexec/persist_mount.sh <uuid> /media/volume/<name> ext4` |
@@ -44,7 +49,7 @@ Transfer routes are covered in
 
 | In the application | On the command line |
 |---|---|
-| **Publish my dashboard** | `DATA_DIR=/media/volume/<name> ./deploy/build_and_run.sh /path/to/project` |
+| **Publish my dashboard** | `DATA_DIR=/media/volume/<name> ./deploy/build_and_run.sh /path/to/project`, plus `ENTRY_FILE=`, `DATA_SUBDIR=` or `BUNDLE_DATA=1` if tabs 1–2 set them |
 | **Force framework** | `FRAMEWORK=dash ./deploy/build_and_run.sh …` |
 | **Base image** | `BASE_IMAGE=python:3.9-slim ./deploy/build_and_run.sh …` |
 | **App's internal port** | `CONTAINER_PORT=8080 ./deploy/build_and_run.sh …` |

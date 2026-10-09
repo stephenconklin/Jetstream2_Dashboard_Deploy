@@ -38,12 +38,15 @@ Then open the Manage tab and match the headline:
 
     Press **Start**.
 
-??? failure "\"The app isn't responding\""
+??? failure "\"Your dashboard isn't answering.\""
 
     The container is running but your app inside it is silent. Nearly always
     your app crashed at startup.
 
-    1. Press **Show latest** and read the bottom of the log
+    1. Press **Show latest** and read the bottom of the log. For an R Shiny
+       app, the publish log is often more useful: when R errors while
+       loading the app, publishing stops within seconds and prints R's own
+       error under *"R stopped with an error while loading it"*
     2. Check **Restarts** in Details — climbing means a crash loop
     3. The usual causes, in order of frequency:
        - **A data file it can't find** →
@@ -84,14 +87,22 @@ By far the most common. Your data isn't where your app is looking.
 
 Work through these in order:
 
-1. **Did you choose a data folder?** Manage tab → **Publish again** is not the
-   fix; go to tab 2 and check a folder is selected.
+1. **Where is that data supposed to come from?** If it's in your project
+   folder, check the file is really there with exactly that name — capital
+   letters included — and that tab 1 has no note about it under **Worth
+   checking in your code**. If it's on a volume, go to tab 2 and check *In a
+   separate folder on this server* is chosen and a folder is selected. Manage
+   tab → **Publish again** alone is not the fix.
 
-2. **Is that folder actually empty?** Tab 2 → **Look in that folder now**. If
+2. **Does your code call the folder something other than `data`?** `Data/`,
+   `inputs/`? Type that name under **What your code calls that folder** on
+   tab 2, then publish again.
+
+3. **Is that folder actually empty?** Tab 2 → **Look in that folder now**. If
    it says empty, that's your answer — and note that an empty folder is
    attached *over* whatever your project shipped, hiding it.
 
-3. **Are the files at the right level?** The **contents** of your chosen folder
+4. **Are the files at the right level?** The **contents** of your chosen folder
    appear at `data/`. So:
 
     ```
@@ -102,7 +113,7 @@ Work through these in order:
     The second is the classic `rsync` trailing-slash mistake. Either move the
     files up a level, or select the inner folder instead.
 
-4. **Is your code using a relative path?** `read.csv("data/counts.csv")`, not
+5. **Is your code using a relative path?** `read.csv("data/counts.csv")`, not
    an absolute path from your own machine. See
    [checking your paths](../part2-prepare/data-paths.md#checking-your-paths-before-you-upload).
 
@@ -110,9 +121,11 @@ Work through these in order:
 
 The build installed it, but the running app can't see it. Two causes:
 
-- **You uploaded the `renv/` folder or `.Rprofile`.** The app tries to activate
-  a renv project whose library doesn't exist there. Delete both from the
-  project on the instance and publish again. See
+- **Your `.Rprofile` points R at another library** in a way the publish
+  step doesn't recognise. It switches off the standard
+  `source("renv/activate.R")` line automatically; a hand-written
+  `.libPaths(...)` or a different activation script isn't touched. Remove that
+  line and publish again. See
   [what renv leaves behind](../part2-prepare/r-packages.md#what-renv-leaves-behind).
 - **The package is loaded dynamically** and the static scan missed it. Add it
   explicitly to your `renv.lock`.

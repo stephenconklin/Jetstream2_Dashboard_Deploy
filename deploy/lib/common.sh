@@ -33,9 +33,20 @@ cleanup_build_ctx() {
 # otherwise leave an renv install consuming CPU indefinitely. The preflight
 # containers are given predictable names precisely so they can be found and
 # removed here.
+#
+# Only the ones THIS process started. manage.sh sources this file too, and so
+# does every `build_and_run.sh --dry-run`, so this trap fires every time the
+# GUI checks status or inspects a project. Removing the names unconditionally
+# killed a lockfile generation running in a *different* process — mid-build,
+# with no error — whenever anything checked on the dashboard during an R
+# build, which the GUI's live bar does every 30 seconds.
+PREFLIGHT_STARTED=""
 cleanup_preflight_containers() {
-  local base="${IMAGE_NAME:-dashboard-app}"
-  docker rm -f "${base}-lockgen" "${base}-uvgen" >/dev/null 2>&1 || true
+  local name
+  for name in $PREFLIGHT_STARTED; do
+    docker rm -f "$name" >/dev/null 2>&1 || true
+  done
+  PREFLIGHT_STARTED=""
 }
 # INT/TERM get their own handlers that exit explicitly: a bare signal trap
 # runs the handler and then *resumes* the script, which on Ctrl-C during a
@@ -59,14 +70,54 @@ container_port_for_framework() {
   esac
 }
 
-# Where a project's data/ directory gets bind-mounted (and where the
-# DATA_DIR env var, set alongside it, points) inside the container.
+# Where the project's data folder gets bind-mounted (and where the DATA_DIR
+# env var, set alongside it, points) inside the container: the app's own
+# folder plus DATA_SUBDIR, the name the app's code reads from (default data).
 container_data_mount_target_for_framework() {
+  local subdir="${2:-data}"
   case "$1" in
-    r-shiny)                      echo /srv/shiny-server/data ;;
-    dash|python-shiny|streamlit)  echo /app/data ;;
+    r-shiny)                      echo "/srv/shiny-server/$subdir" ;;
+    dash|python-shiny|streamlit)  echo "/app/$subdir" ;;
     *) echo "container_data_mount_target_for_framework: unknown framework '$1'" >&2; return 1 ;;
   esac
+}
+
+# Above this, data inside the app folder is too big to publish with the
+# code: every re-publish re-copies it and the image grows with it. Big data
+# belongs on a storage volume, mounted with DATA_DIR. A warning, not a
+# refusal — the GUI says so before publishing.
+BUNDLE_WARN_KB=$((1024 * 1024))
+
+# What would be copied into the image, in KB: the project minus the things
+# build_image() leaves out (sets APP_FOLDER_KB), and the DATA_SUBDIR folder
+# on its own (sets DATA_SUBDIR_KB). `du -sk` and subtraction rather than one
+# filtered walk, because BSD and GNU du disagree on how to exclude. Never
+# fails the caller: an unreadable folder reports 0.
+measure_project_size() {
+  local kb sub
+  APP_FOLDER_KB="$( (du -sk "$PROJECT_DIR" 2>/dev/null || true) | awk 'NR==1 {print $1+0}')"
+  APP_FOLDER_KB="${APP_FOLDER_KB:-0}"
+  for sub in .git .venv venv node_modules __pycache__ .Rproj.user rsconnect \
+             renv/library renv/staging .RData; do
+    [[ -e "$PROJECT_DIR/$sub" ]] || continue
+    kb="$( (du -sk "$PROJECT_DIR/$sub" 2>/dev/null || true) | awk 'NR==1 {print $1+0}')"
+    APP_FOLDER_KB=$(( APP_FOLDER_KB - ${kb:-0} ))
+  done
+  [[ "$APP_FOLDER_KB" -lt 0 ]] && APP_FOLDER_KB=0
+  DATA_SUBDIR_KB=0
+  if [[ -d "$PROJECT_DIR/$DATA_SUBDIR" ]]; then
+    DATA_SUBDIR_KB="$( (du -sk "$PROJECT_DIR/$DATA_SUBDIR" 2>/dev/null || true) | awk 'NR==1 {print $1+0}')"
+    DATA_SUBDIR_KB="${DATA_SUBDIR_KB:-0}"
+  fi
+  return 0
+}
+
+# KB as a short human size, for messages.
+human_kb() {
+  awk -v kb="$1" 'BEGIN {
+    if (kb >= 1048576) printf "%.1f GB", kb / 1048576
+    else if (kb >= 1024) printf "%.0f MB", kb / 1024
+    else printf "%d KB", kb }'
 }
 
 # Fail with an actionable message if a required project file is missing.
@@ -91,16 +142,34 @@ print_dry_run_summary() {
   echo "=== Dry run: $PROJECT_DIR ==="
   echo "Framework:       $FRAMEWORK"
   echo "Entry point:     $ENTRY_POINT_DESC"
+  if [[ "$ENTRY_STATE" == "ambiguous" ]]; then
+    echo "                 (a deploy will stop until ENTRY_FILE names one of these)"
+  elif [[ "$FRAMEWORK" == "r-shiny" && -n "$ENTRY_FILE" && "$ENTRY_FILE" != "app.R" ]]; then
+    echo "                 (not named app.R — the build adds an app.R that runs it)"
+  fi
   echo "Base image:      $BASE_IMAGE"
   echo "Dependencies:    $deps_status"
   # When absent, say what to do about it rather than just "none". Moving
   # data out of the project onto a storage volume is the recommended
   # arrangement, and it makes this read "none" — so a bare "none" is most
   # misleading for exactly the projects that are set up correctly.
-  echo "data/ directory: $([[ "$has_data_dir" -eq 1 ]] \
-    && echo "present (DATA_DIR would be required, prompted for if unset)" \
-    || echo "not in the project (set DATA_DIR=/path to mount data from elsewhere)")"
+  echo "App folder:      $(human_kb "$APP_FOLDER_KB") would be published with the app"
+  local data_line
+  if [[ "$has_data_dir" -eq 1 ]]; then
+    data_line="present, $(human_kb "$DATA_SUBDIR_KB") (mount it with DATA_DIR, or BUNDLE_DATA=1 to publish it with the app)"
+  elif [[ "${DATA_DIR_REFS:-0}" -gt 0 ]]; then
+    data_line="not in the project, but the code reads $DATA_DIR_REFS file(s) from it — set DATA_DIR=/path"
+  else
+    data_line="not in the project (set DATA_DIR=/path to mount data from elsewhere)"
+  fi
+  printf '%-17s%s\n' "$DATA_SUBDIR/ folder:" "$data_line"
   echo "apt.txt:         $([[ "$has_apt_txt" -eq 1 ]] && echo present || echo "absent/empty")"
+  if [[ "$CODE_NOTE_COUNT" -gt 0 ]]; then
+    echo "Code check:      $CODE_NOTE_COUNT thing(s) worth a look (advisory, won't stop a deploy):"
+    printf '%s' "$CODE_NOTES" | sed 's/^/                   /'
+  else
+    echo "Code check:      nothing found"
+  fi
   echo "Serving:         $([[ "$PROXY_ENABLED" -eq 1 ]] \
     && echo "nginx on port 80 -> app on $APP_BIND_ADDR:$APP_HOST_PORT" \
     || echo "app published directly on port 80 (no proxy; run bootstrap.sh to add one)")"
@@ -131,52 +200,76 @@ print_dry_run_porcelain() {
   echo "framework=$FRAMEWORK"
   echo "entry_file=${ENTRY_FILE:-}"
   echo "entry_point_desc=$ENTRY_POINT_DESC"
+  echo "entry_state=$ENTRY_STATE"
+  # "/"-separated: the one character that can never appear in a file name.
+  echo "entry_candidates=$ENTRY_CANDIDATES"
   echo "base_image=$BASE_IMAGE"
   echo "deps_state=$deps_state"
   echo "uses_geospatial=$uses_geospatial"
   echo "has_data_dir=$has_data_dir"
   echo "has_apt_txt=$has_apt_txt"
   echo "container_port=$(container_port_for_framework "$FRAMEWORK")"
-  echo "data_mount_target=$(container_data_mount_target_for_framework "$FRAMEWORK")"
+  echo "data_mount_target=$(container_data_mount_target_for_framework "$FRAMEWORK" "$DATA_SUBDIR")"
+  echo "data_subdir=$DATA_SUBDIR"
+  echo "app_folder_kb=$APP_FOLDER_KB"
+  echo "data_subdir_kb=$DATA_SUBDIR_KB"
+  echo "bundle_warn_kb=$BUNDLE_WARN_KB"
+  echo "data_dir_refs=${DATA_DIR_REFS:-0}"
+  # Numbered keys rather than one multi-line value, keeping the one-line
+  # promise above. code_notes is the count; code_note_1..N are "file:line:
+  # message", in a stable order.
+  echo "code_notes=$CODE_NOTE_COUNT"
+  local n=0 note
+  while IFS= read -r note; do
+    [[ -n "$note" ]] || continue
+    n=$((n + 1))
+    echo "code_note_$n=$note"
+  done <<< "$CODE_NOTES"
   echo "proxy_enabled=$PROXY_ENABLED"
   echo "app_bind_addr=$APP_BIND_ADDR"
   echo "app_host_port=$APP_HOST_PORT"
   echo "server_name=$PROXY_SERVER_NAME"
 }
 
-# Data is never baked into the image. If the project ships a data/ directory
-# and the caller hasn't already pointed DATA_DIR at a real location, prompt
-# for one interactively — the app's data must come from a bind-mounted host
-# path (typically a Jetstream2 storage volume) instead. Framework-agnostic:
-# every framework gets the same data/ convention and the same prompt; only
-# the eventual mount target and env var differ (see
-# container_data_mount_target_for_framework above). Reads/writes the
-# caller's PROJECT_DIR / DATA_DIR globals.
+# Decides where the app's data folder (DATA_SUBDIR, default data/) comes from
+# when the project ships one: mounted from DATA_DIR (typically a Jetstream2
+# storage volume — survives rebuilds, can be updated without one, and keeps
+# big data out of the image), or published inside the image with the code
+# (BUNDLE_DATA=1 — simplest, fine for small data). Without either, ask on a
+# terminal and fail with instructions off one. Framework-agnostic: only the
+# eventual mount target differs (see container_data_mount_target_for_framework
+# above). Reads/writes the caller's PROJECT_DIR / DATA_DIR / DATA_SUBDIR /
+# BUNDLE_DATA globals.
 resolve_data_dir() {
-  if [[ -d "$PROJECT_DIR/data" && -z "$DATA_DIR" ]]; then
+  if [[ -n "$DATA_DIR" && ! -d "$DATA_DIR" ]]; then
+    echo "DATA_DIR '$DATA_DIR' is not a directory." >&2
+    exit 1
+  fi
+  [[ -d "$PROJECT_DIR/$DATA_SUBDIR" && -z "$DATA_DIR" ]] || return 0
+
+  if [[ "$BUNDLE_DATA" != "1" ]]; then
     if [[ ! -t 0 ]]; then
-      echo "This project has a data/ directory, but DATA_DIR isn't set and no terminal" >&2
-      echo "is attached to prompt for one. Set DATA_DIR=/media/volume/<volume-name>/... and re-run." >&2
+      echo "This project has a $DATA_SUBDIR/ folder. Say where its data should come from:" >&2
+      echo "  DATA_DIR=/media/volume/<volume-name>/...  to mount it from a storage volume, or" >&2
+      echo "  BUNDLE_DATA=1                             to publish the folder with the app." >&2
       exit 1
     fi
     echo
-    echo "This project ships a data/ directory. To keep data out of the Docker image"
-    echo "(so it survives rebuilds and isn't duplicated), point this at the actual"
-    echo "location of your data instead — usually a Jetstream2 storage volume mounted"
-    echo "under /media/volume/<volume-name>/... (run 'df -h' if you're not sure of the"
-    echo "exact path)."
-    while [[ -z "$DATA_DIR" ]]; do
-      read -rp "Enter the full path to your data directory: " DATA_DIR
+    echo "This project has a $DATA_SUBDIR/ folder ($(human_kb "$DATA_SUBDIR_KB")). Either:"
+    echo "  - enter the full path where that data lives on this server — usually a"
+    echo "    storage volume under /media/volume/<volume-name>/... ('df -h' lists them) —"
+    echo "    so it can be updated without re-publishing, or"
+    echo "  - press Enter to publish the folder with the app (fine for small data)."
+    while true; do
+      read -rp "Path to your data (or Enter to publish it with the app): " DATA_DIR
       if [[ -z "$DATA_DIR" ]]; then
-        echo "A data directory path is required — this project reads from data/." >&2
-      elif [[ ! -d "$DATA_DIR" ]]; then
-        echo "'$DATA_DIR' is not a directory. Try again." >&2
-        DATA_DIR=""
+        BUNDLE_DATA=1
+        break
+      elif [[ -d "$DATA_DIR" ]]; then
+        break
       fi
+      echo "'$DATA_DIR' is not a directory. Try again." >&2
     done
-  elif [[ -n "$DATA_DIR" && ! -d "$DATA_DIR" ]]; then
-    echo "DATA_DIR '$DATA_DIR' is not a directory." >&2
-    exit 1
   fi
 }
 
@@ -245,6 +338,7 @@ generate_renv_lock() {
   # on the instance indefinitely.
   local lockgen_name="${real_image_name}-lockgen"
   docker rm -f "$lockgen_name" >/dev/null 2>&1 || true
+  PREFLIGHT_STARTED+=" $lockgen_name"
 
   if ! docker run --rm --name "$lockgen_name" \
     "${run_platform_args[@]+"${run_platform_args[@]}"}" \
@@ -289,6 +383,7 @@ generate_requirements_from_uv() {
   # Named for the same reason as the lockfile container above.
   local uvgen_name="${IMAGE_NAME:-dashboard-app}-uvgen"
   docker rm -f "$uvgen_name" >/dev/null 2>&1 || true
+  PREFLIGHT_STARTED+=" $uvgen_name"
 
   if ! docker run --rm --name "$uvgen_name" \
     -v "$(cd "$PROJECT_DIR" && pwd):/app" -w /app \
@@ -301,6 +396,56 @@ generate_requirements_from_uv() {
     exit 1
   fi
   echo "requirements.txt generated at $PROJECT_DIR/requirements.txt" >&2
+}
+
+# Adjusts the build's *copy* of an R Shiny project so Shiny Server can run
+# it as the researcher wrote it. Never touches the project folder itself.
+#
+# 1. A main file not named app.R gets an app.R that runs it. Shiny Server
+#    only looks for app.R (or ui.R/server.R), and renaming the researcher's
+#    file instead would break anything in their code that refers to it.
+#    shinyAppFile() when the file ends in its own shinyApp() call; otherwise
+#    the file builds `ui` and `server` for RStudio's "Run App" button, so
+#    source it and finish the job ourselves.
+#
+# 2. An .Rprofile that activates renv is disabled. Shiny Server starts R in
+#    the app folder, so R runs the project's .Rprofile — and a
+#    `source("renv/activate.R")` either points at an renv/ folder that never
+#    made it to the server (in non-interactive R that's "Execution halted",
+#    so every session dies at startup) or activates a project library that
+#    install_deps.R never filled. Packages live in the image's site library;
+#    nothing here needs renv at run time. Only the activation line is
+#    commented out, so anything else the profile sets still applies.
+#
+# Reads FRAMEWORK, ENTRY_FILE from the caller.
+prepare_r_build_copy() {
+  local app_dir="$1"
+
+  if [[ -n "${ENTRY_FILE:-}" && "$ENTRY_FILE" != "app.R" ]]; then
+    # Escaped for an R double-quoted string literal.
+    local r_name
+    r_name="$(printf '%s' "$ENTRY_FILE" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
+    {
+      echo "# Added by Jetstream2 Dashboard Deploy: Shiny Server runs app.R, and"
+      echo "# this project's main file is $ENTRY_FILE. Not part of your project."
+      if file_calls_shiny_app "$app_dir/$ENTRY_FILE"; then
+        echo "shiny::shinyAppFile(\"$r_name\")"
+      else
+        echo "source(\"$r_name\", local = TRUE)"
+        echo "shiny::shinyApp(ui = ui, server = server)"
+      fi
+    } > "$app_dir/app.R"
+    echo "Main file is $ENTRY_FILE — added an app.R to the build that runs it." >&2
+  fi
+
+  if [[ -f "$app_dir/.Rprofile" ]] \
+     && grep -qE '^[^#]*renv/activate\.R' "$app_dir/.Rprofile"; then
+    sed -i.orig -E 's|^([^#]*renv/activate\.R.*)$|# Disabled by Jetstream2 Dashboard Deploy: \1|' \
+      "$app_dir/.Rprofile"
+    rm -f "$app_dir/.Rprofile.orig"
+    echo "Your .Rprofile activates renv — disabled that line in the build (packages are" >&2
+    echo "installed into the image instead). Your own copy is unchanged." >&2
+  fi
 }
 
 # Assembles a temp build context and runs `docker build`, retrying the whole
@@ -345,12 +490,28 @@ build_image() {
     --exclude=./node_modules
     --exclude=./.DS_Store
     --exclude=./.env
+    # RStudio session leftovers. .RData in particular can be large and is a
+    # snapshot of someone's workspace, not part of the app.
+    --exclude=./.RData
+    --exclude=./.Rhistory
+    --exclude=./rsconnect
+    # A project renv library holds packages compiled for the researcher's own
+    # machine (often macOS or Windows binaries). install_deps.R installs the
+    # Linux equivalents into the image instead.
+    --exclude=./renv/library
+    --exclude=./renv/staging
   )
-  # Data is bind-mounted from DATA_DIR at runtime, never baked in.
-  [[ -n "$DATA_DIR" ]] && exclude_args+=(--exclude=./data)
+  # Mounted from DATA_DIR at run time, so the project's own copy (if any)
+  # stays out of the image.
+  [[ -n "$DATA_DIR" ]] && exclude_args+=("--exclude=./$DATA_SUBDIR")
   tar -cf - -C "$PROJECT_DIR" "${exclude_args[@]}" . | tar -xf - -C "$build_ctx/app"
 
   touch "$build_ctx/app/apt.txt"   # harmless no-op if the project already has one
+
+  # Not for the deps-base preflight, which only reads apt.txt from the copy.
+  if [[ "$FRAMEWORK" == "r-shiny" && -z "${BUILD_TARGET:-}" ]]; then
+    prepare_r_build_copy "$build_ctx/app"
+  fi
 
   # Belt-and-braces against the excludes above drifting out of sync with
   # what the Dockerfiles COPY — .dockerignore is enforced by the daemon.
@@ -364,6 +525,11 @@ build_image() {
 **/node_modules
 **/.DS_Store
 **/.env
+app/.RData
+app/.Rhistory
+app/rsconnect
+app/renv/library
+app/renv/staging
 DOCKERIGNORE
 
   local target_args=()
@@ -532,7 +698,9 @@ run_container() {
   local provenance_args=(
     --label "dashboard.project_dir=$(cd "$PROJECT_DIR" && pwd)"
     --label "dashboard.data_dir=$data_host_path"
+    --label "dashboard.data_subdir=$DATA_SUBDIR"
     --label "dashboard.framework=$FRAMEWORK"
+    --label "dashboard.entry_file=${ENTRY_FILE:-}"
     --label "dashboard.deployed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   )
 
@@ -643,12 +811,33 @@ public_url() {
 # loading the page can tell you the dashboard actually works.
 #
 # Reads CONTAINER_NAME from the caller.
+# R Shiny only: how many Shiny Server workers have died with an R error so
+# far. Shiny Server stays up and keeps retrying an app that errors while
+# loading, so the container never exits and its restart count never moves —
+# the only evidence of a crash loop is in the per-worker logs inside it
+# (kept by `preserve_logs` in shiny-server.conf).
+r_worker_failures() {
+  docker exec "$CONTAINER_NAME" sh -c \
+    'grep -l "Execution halted" /var/log/shiny-server/*.log 2>/dev/null | wc -l' \
+    2>/dev/null | tr -d '[:space:]' || true
+}
+
+# The R error from the most recent failed worker, without the blank lines R
+# pads tracebacks with or the `su:` notice Shiny Server writes at the top of
+# every worker log. This, not `docker logs`, is what says why an R Shiny
+# app won't start: the container's own output is only Shiny Server's.
+r_worker_error() {
+  docker exec "$CONTAINER_NAME" sh -c \
+    'f=$(grep -l "Execution halted" /var/log/shiny-server/*.log 2>/dev/null | tail -n 1);
+     [ -n "$f" ] && grep -v -e "^[[:space:]]*$" -e "^su: " "$f" | tail -n 30' 2>/dev/null || true
+}
+
 run_smoke_test() {
   local app_url
   app_url="$(app_direct_url)"
   echo "Waiting for the app to respond on ${app_url}..."
   if command -v curl >/dev/null 2>&1; then
-    local smoke_test_ok=0 crashed=0 waited=0
+    local smoke_test_ok=0 crashed=0 r_failed=0 waited=0
     # The window matches the app's own startup allowance rather than a flat
     # 60s. A geospatial R Shiny worker is given 300s to attach sf/terra/GDAL
     # (shiny-server.conf's app_init_timeout), and a shorter wait here reports
@@ -673,6 +862,15 @@ run_smoke_test() {
       # that it started, fell over, and was picked back up.
       if [[ "$(docker inspect -f '{{.RestartCount}}' "$CONTAINER_NAME" 2>/dev/null || echo 0)" -gt 0 ]]; then
         crashed=1
+        break
+      fi
+      # Two failed workers, not one: Shiny Server retries on every request,
+      # so a second identical failure is what separates "this app errors
+      # while loading" from a one-off. Checked every 6s to keep the docker
+      # exec overhead negligible next to a multi-minute geospatial startup.
+      if [[ "$FRAMEWORK" == "r-shiny" && $((waited % 6)) -eq 0 \
+            && "$(r_worker_failures)" -ge 2 ]] 2>/dev/null; then
+        r_failed=1
         break
       fi
 
@@ -720,6 +918,18 @@ run_smoke_test() {
       echo "  Re-run this script to deploy again after a code change; it replaces"
       echo "  the running container for you."
       echo
+    elif [[ "$r_failed" -eq 1 ]]; then
+      echo "Your app started, but R stopped with an error while loading it — every" >&2
+      echo "attempt fails the same way, so there's no point waiting longer. The image" >&2
+      echo "built fine; this is about what the app finds when it runs. R's error:" >&2
+      echo >&2
+      r_worker_error | sed 's/^/    /' >&2
+      echo >&2
+      echo "A missing file (\"cannot open file\", \"does not exist\") usually means the" >&2
+      echo "data isn't where the code looks: see the data step, and the code check's" >&2
+      echo "notes. The container is left running; stop it with:" >&2
+      echo "  docker stop $CONTAINER_NAME" >&2
+      exit 1
     else
       if [[ "$crashed" -eq 1 ]]; then
         echo "Warning: container '$CONTAINER_NAME' started, then crashed and was restarted" >&2

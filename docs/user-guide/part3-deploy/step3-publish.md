@@ -4,11 +4,9 @@
 
 This tab shows you what's about to happen, then does it.
 
-<figure class="shot shot--todo">
-  <div class="shot__box">
-    <span class="shot__label">Screenshot needed</span>
-    <span class="shot__file">assets/screenshots/p3-tab3-ready.png</span>
-  </div>
+<figure class="shot">
+  <img src="../../assets/screenshots/p3-tab3-ready.png"
+       alt="Tab 3 before publishing: the readiness summary, the Advanced panel collapsed, and the Publish my dashboard button enabled.">
   <figcaption>Tab 3 before publishing: the readiness summary, the Advanced
   panel collapsed, and the Publish my dashboard button enabled.</figcaption>
 </figure>
@@ -21,13 +19,20 @@ At the top is a plain-English account of what will be built:
 
 ```
 Ready to publish the r-shiny dashboard in /home/exouser/salmon-dashboard.
+Main file: salmon_app.R
 
 Data: /media/volume/salmon-data
       appears inside the app at /srv/shiny-server/data
 ```
 
-Check the project folder, and check the data mapping. This is your last chance
-to catch a wrong folder before spending build time on it.
+or, for data kept in the app folder:
+
+```
+Data: published with the app (3.5 MB in all).
+```
+
+Check the project folder, the main file, and the data line. This is your last
+chance to catch a wrong choice before spending build time on it.
 
 The summary may also warn you about one of these:
 
@@ -48,7 +53,7 @@ The summary may also warn you about one of these:
 ??? danger "\"WARNING: that folder is empty\""
 
     The data folder you chose in step 2 has nothing in it. It will be attached
-    over your app's `data/` directory, hiding anything your project shipped, and
+    over your app's own data folder, hiding anything your project shipped, and
     **your app will probably fail to start**.
 
     Go back to [step 2](step2-your-data.md#check-what-s-arrived), upload your
@@ -67,11 +72,42 @@ The summary may also warn you about one of these:
     See [creating a requirements.txt](../part2-prepare/python-packages.md),
     then re-select the folder on tab 1.
 
-??? note "\"No data folder attached\""
+??? note "\"You chose to keep your data in a separate folder — pick that folder in step 2\""
 
-    You haven't chosen a data location, and your project doesn't ship a `data/`
-    folder. This is fine **if** your dashboard genuinely reads no files —
-    otherwise go back to [step 2](step2-your-data.md).
+    You chose Option 2 on tab 2 but haven't picked the folder yet. The
+    Publish button stays disabled until you do, or until you switch back to
+    publishing the data with the app.
+
+??? warning "\"WARNING: that's a lot to publish with the app\""
+
+    Your app folder is over about a gigabyte, and everything in it would be
+    copied into the published dashboard on every publish. Move the data into
+    one folder on a storage volume and choose
+    [Option 2 on step 2](step2-your-data.md#option-2-in-a-separate-folder-on-this-server).
+
+??? failure "\"Several files in your folder could be the dashboard\""
+
+    Go back to [step 1](step1-your-app.md#your-dashboards-main-file) and pick
+    the main file from the dropdown.
+
+### If a different dashboard is live
+
+If the live bar says a **different** project is live, the button reads
+**Replace the live dashboard…**, and pressing it asks you to confirm, naming
+both folders:
+
+<figure class="shot shot--todo">
+  <div class="shot__box">
+    <span class="shot__label">Screenshot needed</span>
+    <span class="shot__file">assets/screenshots/p3-replace-confirm.png</span>
+  </div>
+  <figcaption>The confirmation shown before one dashboard replaces another,
+  naming the folder that's live now and the one that will replace it.</figcaption>
+</figure>
+
+Your current dashboard keeps running while the new one is built. Once the new
+one starts, the old one is gone; to bring it back, select its folder on tab 1
+and publish it again.
 
 ---
 
@@ -79,18 +115,17 @@ The summary may also warn you about one of these:
 
 Skip this section entirely on your first attempt. Come back if the build fails.
 
-<figure class="shot shot--todo">
-  <div class="shot__box">
-    <span class="shot__label">Screenshot needed</span>
-    <span class="shot__file">assets/screenshots/p3-tab3-advanced.png</span>
-  </div>
+<figure class="shot">
+  <img src="../../assets/screenshots/p3-tab3-advanced.png"
+       alt="The Advanced panel expanded, showing Force framework, App's internal port, and Base image.">
   <figcaption>The Advanced panel expanded, showing Force framework, App's
   internal port, and Base image.</figcaption>
 </figure>
 
 **Force framework**
 :   Overrides the automatic detection. Use it if tab 1 detected the wrong
-    framework, or reported an ambiguity you can't resolve by deleting a file.
+    framework. To pick which *file* is your app, use the main-file dropdown on
+    tab 1 instead.
 
 **App's internal port**
 :   The port your app's server listens on inside its container. Leave blank —
@@ -258,6 +293,7 @@ The common failures, by what you see:
 | `ERROR: Could not find a version that satisfies` | A pinned package doesn't exist for this Python | [Base image](#advanced-options) |
 | `configure: error: ... GDAL ... PROJ ...` | Geospatial version drift | [Pinning R versions](../reference/deployment.md#pinning-r-package-versions-to-avoid-cran-version-drift) |
 | `ImportError: cannot import name ...` | Unpinned transitive dependency moved on | [Pin it](../part2-prepare/python-packages.md#when-an-old-project-wont-build) |
+| `R stopped with an error while loading it` | An R Shiny app errors at startup. R's own error is printed right below — most often a data file it can't find | [Data paths](../part2-prepare/data-paths.md) |
 | The app never answered | App crashed at startup — the log's last 50 lines show why | [Troubleshooting](../help/troubleshooting.md) |
 
 More detail on each: **[When something goes wrong](../help/troubleshooting.md)**.

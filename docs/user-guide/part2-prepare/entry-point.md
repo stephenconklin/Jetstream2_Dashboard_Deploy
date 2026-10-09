@@ -18,20 +18,26 @@ level of your project folder, and it must contain a recognisable **signal**.
 
     ```
     my-dashboard/
-    ├── app.R              ← the starting file
+    ├── app.R              ← the starting file (any name works — see below)
     ├── renv.lock          ← the package list (Part 2, step 2)
     ├── R/                 ← optional: helper scripts
     ├── www/               ← optional: images, CSS
     └── data/              ← optional: small data files
     ```
 
-    Any **one** of these three arrangements works:
+    Any **one** of these arrangements works:
 
     | Arrangement | Files |
     |---|---|
-    | Single file | `app.R` |
+    | Single file | `app.R`, **or any other name** — `water_quality.R` is fine, as long as it calls `shinyApp(...)` |
     | Split | `ui.R` **and** `server.R` |
     | R Markdown | any `.Rmd` with `runtime: shiny` in its YAML front matter (this covers **flexdashboard**) |
+
+    **You don't need to rename your file to `app.R`.** The server only
+    understands `app.R`, so when your main file has another name, publishing
+    adds a one-line `app.R` that runs it, in the published copy only. If
+    several files call `shinyApp(...)` (an `app_old.R` alongside the real one,
+    say), the application asks you which one is the dashboard.
 
     The R Markdown form is recognised by the front matter, so it must contain:
 
@@ -110,6 +116,14 @@ level of your project folder, and it must contain a recognisable **signal**.
     `streamlit_app.py` is preferred and checked first; `app.py` also works.
     If you have both, `streamlit_app.py` wins.
 
+!!! tip "Python files can have any name too"
+
+    `app.py` and `streamlit_app.py` are conventions, not requirements: the
+    file is found by what's in it. One limit for Dash and Python Shiny: the
+    server loads the file as a Python module, so its name may only use
+    letters, digits and underscores (`water_quality.py`, not
+    `water-quality.py`).
+
 ---
 
 ## The rules that catch people out
@@ -145,18 +159,19 @@ file at the top level that hands off to the real one:
     server = app.server                  # Dash only
     ```
 
-### There must be exactly one framework signal
+### If more than one file could be the app, you'll be asked
 
-If the tooling finds Dash signals in one file and Streamlit signals in another,
-it **stops and asks** rather than guessing. That's usually a leftover:
-an old `app.py` you replaced, a scratch file, an example you copied in.
+If the tooling finds several files that could be your dashboard — two `.R`
+files that call `shinyApp()`, or Dash signals in one `.py` file and Streamlit
+signals in another — it **asks rather than guessing**. That's usually a
+leftover: an old version you replaced, a scratch file, an example you copied
+in.
 
-Delete or rename the file you don't want deployed. (Renaming to
-`_old_app.py.bak` is enough — the scan only looks at `.py`, `.R` and `.Rmd`
-files.)
-
-If the ambiguity is real and intentional, you can override detection at publish
-time — see [Step 3 · Publish](../part3-deploy/step3-publish.md#advanced-options).
+In the application, pick the right one on
+[tab 1](../part3-deploy/step1-your-app.md#your-dashboards-main-file). On the
+command line, name it with `ENTRY_FILE=water_quality.R`. Or delete or rename
+the file you don't want deployed — renaming to `_old_app.py.bak` is enough,
+since the scan only looks at `.py`, `.R` and `.Rmd` files.
 
 ### Your app must listen on all interfaces, not just localhost
 
@@ -199,8 +214,15 @@ remove it:
 ## Files you should *not* ship
 
 Some things are skipped automatically when your project is packaged up:
-`.git`, `.venv` / `venv`, `.env`, `__pycache__`, `node_modules`, `.Rproj.user`,
-`.DS_Store`, and the `data/` folder (that gets mounted at run time instead).
+`.git`, `.venv` / `venv`, `.env`, `__pycache__`, `node_modules`, `.DS_Store`,
+RStudio's leftovers (`.Rproj.user`, `.RData`, `.Rhistory`, `rsconnect/`), an
+`renv/library` built for your own computer, and your `data/` folder **if** you
+chose to attach your data from a storage volume instead.
+
+An `.Rprofile` that activates `renv` is also switched off in the published
+copy: the library it points to isn't on the server, and your packages are
+installed into the dashboard directly. The rest of your `.Rprofile` still
+applies.
 
 You don't need to delete them — but it's worth knowing they won't be there, so
 don't rely on any of them at run time. In particular:
@@ -225,8 +247,9 @@ a terminal open, it works there too:
 ./deploy/build_and_run.sh --dry-run /path/to/my-dashboard
 ```
 
-It prints the framework it detected, the entry point it found, and whether your
-package list is present. It changes nothing.
+It prints the framework it detected, the main file it found, whether your
+package list is present, and anything in your code worth checking (a
+`setwd()`, a path on your own computer). It changes nothing.
 
 The application in Part 3 runs exactly this for you and shows you the result the
 moment you select your folder — so if you'd rather not do it here, you'll find

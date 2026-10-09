@@ -51,10 +51,17 @@ After:
 
 ## Capture guidance
 
-**Resolution.** Capture at 1600px wide or more. Material scales images down
-cleanly but cannot invent detail. For full-window shots of the application,
-size the window to roughly 1000×750 first — the guide's screenshots should look
-consistent with each other.
+**Resolution.** For full-window shots of the application, size the window to
+1100×820 and capture at the desktop's normal scale. The guide's column is
+narrower than that, so it stays sharp. Don't capture at a larger Tk scaling to
+gain pixels: the theme's radio buttons and checkboxes are fixed-size images,
+so they come out undersized next to the text and misrepresent the app.
+
+**How the Part 3 shots were made.** The application shots were captured on a
+real instance with `deploy/gui` driven through each state under a virtual
+display (Xvfb). That means real volumes, real nginx, and real builds, with the
+instance's IP redacted to `149.165.xxx.xxx`. Re-capturing them after a UI
+change is the same procedure.
 
 **Redact before you capture, not after.** Real IP addresses, usernames other
 than `exouser`, allocation IDs, project names you'd rather not publish. The
@@ -83,7 +90,7 @@ These come from Exosphere in a browser, not from the instance.
 
 | # | Filename | What must be visible |
 |---|---|---|
-| 1 | `p1-exosphere-home.png` | Exosphere home after login: the allocation selector and the **Create** button |
+| 1 | `p1-exosphere-home.png` | Exosphere home after login, showing the allocation card(s). Close the "Office hours" banner first. (The **Create** button is on the allocation's own page, not here) |
 | 2 | `p1-choose-image.png` | The image chooser with the Dashboard Deploy image selected; the search box and the Public / Shared-with-me tabs both in frame |
 | 3 | `p1-create-instance-form.png` | The Create Instance form: **Name**, **Flavor**, **Enable web desktop** (ticked), and the disk-size slider. Annotate the web-desktop checkbox — it's the setting people miss |
 | 4 | `p1-instance-building.png` | The instance list with the new instance in **Building**, showing its progress message |
@@ -114,6 +121,7 @@ Capture these on a real instance with a real (or demo) project published.
 | 11 | `p3-webdesktop-link.png` | The instance page in Exosphere with the **Web Desktop** action highlighted |
 | 12 | `p3-desktop-icon.png` | The Ubuntu desktop with the **Deploy My Dashboard** icon, with enough surrounding desktop to be findable. Annotate the icon |
 | 13 | `p3-first-open.png` | The application freshly opened on tab 1, nothing selected |
+| 14a | `p3-live-bar.png` | The top of the window with a dashboard live and a **different** project selected: the green LIVE line, the amber "will replace it" line, the key, and the tab symbols |
 | 14 | `p3-app-overview.png` | **Hero image.** The whole window with all four tabs visible, on tab 1 with a project selected and detection reported. This one is worth extra care — it's the first picture most readers see |
 
 ### Tab 1 · Your app
@@ -124,15 +132,18 @@ Capture these on a real instance with a real (or demo) project published.
 | 16 | `p3-tab1-git.png` | Git option selected, a repository URL in the Address field |
 | 17 | `p3-tab1-zip.png` | Zip option selected, a file chosen, **Unpack it** visible |
 | 18 | `p3-tab1-browse.png` | Browse option with a folder path filled in |
-| 19 | `p3-tab1-detected.png` | After a successful selection: framework, entry point, and the data-folder note. **Capture an R Shiny project** so the framework line reads `r-shiny` and matches the guide's example text |
+| 19 | `p3-tab1-detected.png` | After a successful selection: the framework line and the **Your dashboard's main file** box. **Capture an R Shiny project** so the framework line reads `r-shiny` and matches the guide's example text |
+| 19a | `p3-tab1-main-file.png` | The main-file dropdown **open**, listing two candidate `.R` files. `examples/r-shiny-researcher-style` plus a copy of its main file under a second name produces this |
+| 19b | `p3-tab1-code-notes.png` | The **Worth checking in your code** box with two or three notes, e.g. a `setwd()` call and a capitalisation mismatch |
 
 ### Tab 2 · Your data
 
 | # | Filename | What must be visible |
 |---|---|---|
-| 20 | `p3-tab2-full.png` | The whole tab: locations, transfer routes, check panel. May need the window taller than usual |
+| 19c | `p3-tab2-question.png` | The **Where are your dashboard's data files?** question with *In my app folder* selected and the size summary beneath it |
+| 20 | `p3-tab2-full.png` | The whole tab with *In a separate folder* selected: folder name, locations, transfer routes, check panel. May need the window taller than usual |
 | 21 | `p3-tab2-locations.png` | The location list with a mounted volume showing free space, and the home folder beneath it with its warning text |
-| 22 | `p3-tab2-routes.png` | The four transfer routes with one selected and its detail panel showing. Globus or rsync makes the most illustrative choice |
+| 22 | `p3-tab2-routes.png` | The three transfer routes with one selected and its detail panel showing. rsync makes the most illustrative choice |
 | 23 | `p3-tab2-verify.png` | The check panel after a **successful** listing: file count, total size, first few filenames |
 | 24 | `p3-tab2-persist.png` | The reboot-persistence panel with its warning text and **Make this permanent**. Only appears on a volume not yet in `/etc/fstab` — capture it *before* pressing the button |
 
@@ -140,6 +151,7 @@ Capture these on a real instance with a real (or demo) project published.
 
 | # | Filename | What must be visible |
 |---|---|---|
+| 24a | `p3-replace-confirm.png` | The **Replace the live dashboard?** confirmation, naming both folders |
 | 25 | `p3-tab3-ready.png` | Before publishing: the readiness summary including the data mapping, Advanced collapsed, **Publish my dashboard** enabled |
 | 26 | `p3-tab3-advanced.png` | Advanced expanded: Force framework, App's internal port, Base image, and the hint text below |
 | 27 | `p3-tab3-building.png` | A build in progress: log scrolling, elapsed timer, **Stop** enabled. Catch it during package installation so the log looks like real work |

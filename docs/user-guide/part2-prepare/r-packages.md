@@ -120,17 +120,19 @@ my-dashboard/
 **Only `renv.lock` needs to travel to the server.** The rest is machinery for
 *your* machine.
 
-!!! warning "Don't upload the `renv/` folder or `.Rprofile`"
+!!! note "If `renv/` or `.Rprofile` come along anyway, that's handled"
 
-    If those get onto the server, the app tries to activate a renv project
-    whose package cache doesn't exist there, and fails to start with a
-    misleading `there is no package called 'X'` error — for a package that
-    installed perfectly during the build.
+    On the server, renv's activation line would point your app at a private
+    library that doesn't exist there, and it would fail at startup — either
+    stopping outright, or with a misleading `there is no package called 'X'`
+    for a package that installed perfectly during the build. So publishing
+    switches that one line off in the published copy, and leaves the
+    `renv/library` folder out. The rest of your `.Rprofile` still applies,
+    and your own files aren't changed.
 
-    If you're using Git, `renv::init()` writes a `.gitignore` that excludes the
-    library automatically, so a `git clone` onto the server does the right
-    thing. If you're uploading a zip or a folder, **delete `renv/` and
-    `.Rprofile` from the copy you upload.**
+    There's still no reason to upload `renv/`: it's often large, and it holds
+    packages built for your computer, not the server. With Git, the
+    `.gitignore` that `renv::init()` writes already leaves the library out.
 
 ---
 
@@ -211,8 +213,8 @@ my-dashboard/
 From this page, your project needs:
 
 - [x] `renv.lock` — **yes**
-- [ ] `renv/` — no, exclude it
-- [ ] `.Rprofile` — no, exclude it
+- [ ] `renv/` — not needed (left out automatically if it comes along)
+- [ ] `.Rprofile` — fine either way (renv activation is switched off automatically)
 
 ---
 

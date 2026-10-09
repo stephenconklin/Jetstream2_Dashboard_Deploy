@@ -12,12 +12,12 @@ Work down it. Every item is something that has cost somebody a failed build.
 
 - [ ] **The app runs on your own computer, right now**, from a fresh start.
       Not "it worked last month" — run it.
-- [ ] **The starting file is at the top level** of the project folder:
-      `app.R`, `ui.R`+`server.R`, an `.Rmd` with `runtime: shiny`, `app.py`,
-      or `streamlit_app.py`.
+- [ ] **The starting file is at the top level** of the project folder. Any
+      name is fine (`water_quality.R` works as well as `app.R`), and so are
+      `ui.R`+`server.R` or an `.Rmd` with `runtime: shiny`.
 - [ ] **Dash only:** `app.py` contains `server = app.server`.
-- [ ] **No leftover app files** from an earlier version that might confuse
-      framework detection.
+- [ ] **No leftover app files** from an earlier version. They won't break
+      anything, but you'll be asked which file is the real one.
 - [ ] **No absolute paths** — see
       [checking your paths](data-paths.md#checking-your-paths-before-you-upload).
 - [ ] **No hardcoded host or port** in the code that starts the server.
@@ -29,7 +29,8 @@ Work down it. Every item is something that has cost somebody a failed build.
     - [ ] `renv.lock` exists in the project root
     - [ ] The app runs against the renv library (`renv::restore()` then
           `shiny::runApp()`)
-    - [ ] `renv/` and `.Rprofile` are **excluded** from what you upload
+    - [ ] No need to upload `renv/`. An `.Rprofile` that activates renv is
+          switched off automatically in the published copy
     - [ ] `apt.txt` added, if any package needed a system library
 
 === "Python"
@@ -41,17 +42,21 @@ Work down it. Every item is something that has cost somebody a failed build.
 
 ### Your data
 
-- [ ] You know the volume path — `/media/volume/<name>`
-- [ ] Your code reads data via `data/…`, or via `DATA_DIR`
-- [ ] You know whether your project ships a `data/` folder or not, and either
-      way you're planning to point step 2 at your volume
+- [ ] Your code reads data by **relative** path: a bare file name for files
+      next to your code, or `data/…` (or `DATA_DIR`) for a data folder
+- [ ] You know which of the
+      [three arrangements](data-paths.md#three-arrangements-all-fine) you're
+      using: small data in your project folder, published with the app, or
+      large data on your volume (`/media/volume/<name>`), attached to it
 
 ### Size
 
-- [ ] The project folder, **excluding** data, is under a few hundred MB
+- [ ] The project folder, **including** any data you'll publish with it, is
+      under about a gigabyte
 
-    Large files inside the project get baked into the image, making every
-    build slow and the image huge. Move anything big onto the volume.
+    Everything in the project folder is copied into the published dashboard,
+    on every publish. Large files make every build slow and the image huge.
+    Move anything big onto the volume.
 
     Check it:
 
@@ -85,22 +90,26 @@ cd Jetstream2_Dashboard_Deploy
 A healthy result looks like this:
 
 ```console
-Framework:        r-shiny
-Entry point:      app.R
-Base image:       rocker/geospatial:4.4.1
-Dependencies:     renv.lock present
-data/ directory:  present (DATA_DIR would be required, prompted for if unset)
-apt.txt:          not present
+Framework:       r-shiny
+Entry point:     water_quality.R
+                 (not named app.R — the build adds an app.R that runs it)
+Base image:      rocker/geospatial:4.4.1
+Dependencies:    renv.lock present
+App folder:      48 MB would be published with the app
+data/ folder:    not in the project (set DATA_DIR=/path to mount data from elsewhere)
+apt.txt:         absent/empty
+Code check:      nothing found
 ```
 
-Read it as four questions:
+Read it as five questions:
 
 | Line | What to check |
 |---|---|
 | **Framework** | Is it the one you expect? If not, detection found the wrong signal. |
-| **Entry point** | Is that really your app's starting file? |
+| **Entry point** | Is that really your app's starting file? If several files could be, it says so; name the right one with `ENTRY_FILE=…` |
 | **Dependencies** | `missing` means the build will stop. Fix it now. |
-| **data/ directory** | Tells you whether you'll be *required* to choose a data folder |
+| **App folder** | Under about a gigabyte? That's what gets published with the app |
+| **Code check** | Anything listed is worth fixing before you upload: a path on your own computer, a `setwd()`, a file name whose capitals don't match |
 
 !!! info "Don't have a terminal, or on Windows?"
 
@@ -131,7 +140,7 @@ much smoother.
     Zip the project folder. In Part 3, drag it onto the remote desktop and the
     application unpacks it for you.
 
-    Remember to exclude `renv/`, `.Rprofile`, `venv/` and your data first.
+    Remember to leave out `renv/`, `venv/` and any large data first.
 
 -   :material-console: **rsync — for big projects**
 
@@ -149,13 +158,13 @@ Your project should now be a folder containing:
 
 ```
 my-dashboard/
-├── app.R  (or app.py / streamlit_app.py / ui.R + server.R)
+├── app.R  (any name; or app.py / streamlit_app.py / ui.R + server.R)
 ├── renv.lock  (R)  or  requirements.txt  (Python)
 ├── apt.txt         ← only if you needed one
 └── ... your other code, www/, assets/, R/ ...
 ```
 
-…with data either in a small `data/` folder, or already destined for your
-volume.
+…with data either small and alongside your code (published with the app), or
+already destined for your volume.
 
 Next → **[Part 3 · Publish it](../part3-deploy/index.md)**

@@ -20,7 +20,7 @@ its logs, and get help.
 
 The top line tells you the state of things in plain language:
 
-> **The dashboard is up and reachable.** Your dashboard is at
+> **Everything is working.** Your dashboard is at
 > `http://149.165.170.42/`
 
 It re-checks itself **every 30 seconds** while you're looking at this tab, so a
@@ -36,13 +36,17 @@ nobody is looking at.)
 
 | Headline | What's happening | What to do |
 |---|---|---|
-| **Up and reachable** | Working | Nothing |
-| **Nothing is published yet** | No dashboard exists on this instance | Steps 1–3 |
-| **Your dashboard is stopped** | It exists but isn't running — and stays stopped, including through a reboot | **Start** |
-| **The app isn't responding** | The container is running but your app inside it is silent | Read the log below |
-| **The web server isn't serving** | Your app is fine; nginx in front of it isn't | [Troubleshooting](../help/troubleshooting.md#nginx-problems) |
-| **The web server can't reach the app** | Both are running but not talking | [Troubleshooting](../help/troubleshooting.md#nginx-problems) |
-| **Answering, but its health check is failing** | It responds, but not consistently | Read the log; may restart itself |
+| **Everything is working.** | Working | Nothing |
+| **Nothing is published yet.** | No dashboard exists on this instance | Steps 1–3 |
+| **Your dashboard is stopped.** | It exists but isn't running — and stays stopped, including through a reboot | **Start** |
+| **Your dashboard isn't answering.** | The container is running but your app inside it is silent | Read the log below |
+| **The web server in front of your dashboard is down.** | Your app is fine; nginx in front of it isn't | [Troubleshooting](../help/troubleshooting.md#nginx-problems) |
+| **The web server can't reach your dashboard.** | Both are running but not talking | [Troubleshooting](../help/troubleshooting.md#nginx-problems) |
+| **Your dashboard is answering, but something is wrong with it.** | It responds, but its health check is failing | Read the log; it may restart itself |
+
+The same state shows in the **live bar** at the top of the window, whichever
+tab you're on, and as the symbol on this tab: ✓ when it's answering, ⚠ when
+it's running but not answering or stopped, ○ when nothing is published.
 
 That distinction between *your app* and *the web server in front of it* exists
 because from a browser the two failures look identical — a page that won't load
@@ -61,6 +65,11 @@ because from a browser the two failures look identical — a page that won't loa
   Restart/Start, Stop, Publish again.</figcaption>
 </figure>
 
+Buttons that can't do anything right now are greyed out: **Restart** and
+**Stop** when nothing is published, **Stop** when it's already stopped,
+**Open dashboard** when it isn't answering, and **Publish again** until steps
+1 and 2 are done (or while a publish is running).
+
 **Open dashboard**
 :   Opens your dashboard in the desktop's browser.
 
@@ -70,8 +79,9 @@ because from a browser the two failures look identical — a page that won't loa
 **Restart** *(or **Start**, if it's stopped)*
 :   Restarts your dashboard without rebuilding. Takes seconds.
 
-    **This is what you press after updating your data**, since data is attached
-    rather than baked in.
+    **This is what you press after updating data on your volume**, since that
+    data is attached rather than published with the app. (Data published with
+    the app is updated by publishing again.)
 
     Also the first thing to try if your dashboard has gone strange — sluggish,
     stuck, memory-bloated.
@@ -92,7 +102,10 @@ because from a browser the two failures look identical — a page that won't loa
 :   Rebuilds from your current code and republishes. Your existing dashboard
     stays up until the new one is ready.
 
-    This is how you deploy a code change: update the code, press this.
+    This is how you deploy a code change: update the code, press this. Like
+    the button on tab 3, it's labelled for what it will do — *Update my
+    dashboard* if you've changed settings, *Replace the live dashboard…* (with
+    a confirmation) if you've picked a different project.
 
 ---
 

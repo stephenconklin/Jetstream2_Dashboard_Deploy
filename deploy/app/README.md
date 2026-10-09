@@ -10,8 +10,9 @@ run:
 
 The framework is auto-detected from your code. Supported conventions:
 
-- **R Shiny** — `app.R`, or a `ui.R` + `server.R` pair, or an `.Rmd` with
-  `runtime: shiny` in its YAML front matter.
+- **R Shiny** — `app.R` (or any `.R` file that calls `shinyApp()`), or a
+  `ui.R` + `server.R` pair, or an `.Rmd` with `runtime: shiny` in its YAML
+  front matter. If several files could be the app, set `ENTRY_FILE=` to pick.
 - **Plotly Dash** — `app.py` with `import dash` and `server = app.server`.
 - **Python Shiny** — `app.py` with `from shiny import App` and a top-level
   `app = App(...)`.

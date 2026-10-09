@@ -24,24 +24,16 @@ if ! command -v shellcheck >/dev/null 2>&1; then
   exit 1
 fi
 
-# Every tracked shell script. apt_retry.sh is POSIX sh (it runs inside the
-# images, where bash isn't guaranteed); its own shebang tells shellcheck
-# which dialect to check it against.
-FILES=(
-  deploy/build_and_run.sh
-  deploy/manage.sh
-  deploy/bootstrap.sh
-  deploy/lib/common.sh
-  deploy/lib/proxy.sh
-  deploy/lib/disk.sh
-  deploy/lib/detect_framework.sh
-  deploy/lib/persist_mount.sh
-  deploy/docker/apt_retry.sh
-  deploy/lint.sh
-  deploy/gui/launch_gui.sh
-  deploy/gui/run_detached.sh
-  deploy/desktop/setup_image.sh
-)
+# Every tracked shell script, from git itself rather than a hand-kept list:
+# a list drifts the moment someone adds a script, and the new one is then
+# silently never checked on its own (deploy/lib/check_code.sh was, until this
+# changed). apt_retry.sh is POSIX sh (it runs inside the images, where bash
+# isn't guaranteed); its own shebang tells shellcheck which dialect to check.
+# A while-read loop rather than mapfile, which macOS's bash 3.2 lacks.
+FILES=()
+while IFS= read -r f; do
+  FILES+=("$f")
+done < <(git ls-files '*.sh')
 
 echo "shellcheck: ${#FILES[@]} files"
 shellcheck -x "${FILES[@]}"

@@ -10,7 +10,7 @@ You don't have to read all of this. Pick the row that matches you:
 | I have a folder on my laptop | [Drag and drop](#drag-and-drop) for small things, [rsync](#rsync-or-scp) otherwise |
 | I have a `.zip` | [Drag and drop](#drag-and-drop), then unzip |
 | My data is in Google Drive / Box / Dropbox | [Cloud storage](#cloud-storage) |
-| My dataset is tens of GB or more | [Globus](#globus) |
+| My dataset is large (several GB) | [rsync](#rsync-or-scp), which resumes if interrupted |
 
 If you're using the **Deploy My Dashboard** application on the instance's desktop, it walks you through all of these and — importantly — checks afterwards that your files actually arrived. This page is the reference behind it.
 
@@ -23,9 +23,9 @@ If you're using the **Deploy My Dashboard** application on the instance's deskto
 **Your data** may not be. Two rules save a lot of pain:
 
 1. **Put data on your storage volume, not in your home folder.** The home folder lives on the instance's root disk: limited space, and gone if the instance is ever deleted. A volume under `/media/volume/...` persists independently and can be far larger.
-2. **Don't put data inside your project folder** if it's large. The deployment mounts your data at run time rather than copying it into the image, so it lives separately and can be updated without rebuilding anything.
+2. **Small data can stay in your project folder; large data can't.** Anything in the project folder is published with the app, and every publish copies it again — fine for a few spreadsheets, not for gigabytes. Large data goes in one folder on your volume, which the deployment attaches at run time, so it can be updated without re-publishing.
 
-   If you do move a `data/` folder out of your project and onto a volume, **tell the tool where it went** — pick that folder in the application's step 2, or set `DATA_DIR=/media/volume/... ` on the command line. Your app keeps reading `data/` exactly as before; that path is supplied by the mount. Without it the dashboard will start and then fail to find its files.
+   If you do move a `data/` folder out of your project and onto a volume, **tell the tool where it went** — choose *In a separate folder on this server* in the application's step 2 and pick that folder, or set `DATA_DIR=/media/volume/... ` on the command line. Your app keeps reading `data/` exactly as before; that path is supplied by the mount. Without it the dashboard will start and then fail to find its files.
 
 ---
 
@@ -96,19 +96,6 @@ For repeated or scripted transfers, `rclone` is worth setting up — it can sync
 
 ---
 
-## Globus
-
-**The right answer for large datasets** — tens of GB and up, or anything you'd hate to restart. Globus transfers in the background, retries automatically, resumes after interruptions, and is supported natively by Jetstream2. Many institutions already provide an endpoint, and most researchers can log in with their university credentials.
-
-1. On the instance's desktop, open <https://app.globus.org/file-manager>.
-2. Log in with your institution.
-3. Choose your source endpoint (your institution's storage, or Globus Connect Personal on your own machine) and this instance as the destination.
-4. Start the transfer and close the browser — it keeps going, and emails you when it's done.
-
-Globus Connect Personal turns a laptop into an endpoint if your institution doesn't provide one: <https://www.globus.org/globus-connect-personal>
-
----
-
 ## Checking it worked
 
 Whichever route you used, confirm the files are where the deployment will look for them:
@@ -121,6 +108,6 @@ df -h /media/volume/your-volume/       # space left
 
 The desktop application has a **"Look in that folder now"** button that does the same thing.
 
-One thing worth understanding: your data folder is **mounted into** the running dashboard rather than copied into it. A folder on the instance appears inside the app at a fixed location — `/srv/shiny-server/data` for R Shiny, `/app/data` for the Python frameworks — and Python apps can also read the `DATA_DIR` environment variable. The practical upshot is that **updating your data doesn't require rebuilding anything**; replace the files and restart the app.
+One thing worth understanding: a data folder on your volume is **mounted into** the running dashboard rather than copied into it. It appears inside the app as `data/` — `/srv/shiny-server/data` for R Shiny, `/app/data` for the Python frameworks, or another name if your code uses one (`DATA_SUBDIR`) — and Python apps can also read the `DATA_DIR` environment variable. The practical upshot is that **updating that data doesn't require rebuilding anything**; replace the files and restart the app. Data kept in the project folder, by contrast, is published with the app and updated by publishing again.
 
 See [deployment.md](deployment.md) for what happens next.

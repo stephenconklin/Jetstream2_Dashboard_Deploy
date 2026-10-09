@@ -86,7 +86,9 @@ cmd_status() {
       echo "project_dir="
       echo "project_dir_exists=0"
       echo "data_dir="
+      echo "data_subdir="
       echo "framework="
+      echo "entry_file="
       echo "deployed_at="
     else
       echo "No dashboard is deployed yet (no container named '$CONTAINER_NAME')."
@@ -108,10 +110,12 @@ cmd_status() {
 
   # Where this deployment came from. Written as labels by run_container(); see
   # the comment there for why the container rather than a state file.
-  local project_dir data_dir framework deployed_at project_exists
+  local project_dir data_dir data_subdir framework entry_file deployed_at project_exists
   project_dir="$(container_label project_dir)"
   data_dir="$(container_label data_dir)"
+  data_subdir="$(container_label data_subdir)"
   framework="$(container_label framework)"
+  entry_file="$(container_label entry_file)"
   deployed_at="$(container_label deployed_at)"
   # Reported separately because the folder can be renamed, moved or deleted
   # after a deploy while the container carries on serving perfectly well from
@@ -128,7 +132,9 @@ cmd_status() {
     echo "project_dir=$project_dir"
     echo "project_dir_exists=$project_exists"
     echo "data_dir=$data_dir"
+    echo "data_subdir=$data_subdir"
     echo "framework=$framework"
+    echo "entry_file=$entry_file"
     echo "deployed_at=$deployed_at"
   else
     echo "Container: $CONTAINER_NAME"
@@ -149,6 +155,7 @@ cmd_status() {
       echo "  project   ${project_dir}${missing}"
       if [[ -n "$data_dir" ]];    then echo "  data      $data_dir"; fi
       if [[ -n "$framework" ]];   then echo "  framework $framework"; fi
+      if [[ -n "$entry_file" ]];  then echo "  main file $entry_file"; fi
       if [[ -n "$deployed_at" ]]; then echo "  published $deployed_at"; fi
     fi
   fi

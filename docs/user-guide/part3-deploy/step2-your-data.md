@@ -2,19 +2,75 @@
 
 <p class="meta-line">10 minutes of clicking, plus however long your upload takes. Tab 2 of the application.</p>
 
-This tab does three things, top to bottom:
+Your dashboard can only read files it can see on the server. This tab asks
+one question — **where are your dashboard's data files?** — and offers two
+answers:
 
-1. **Where your data will live** — pick the folder on the server
-2. **How to get your data here** — four ways to upload it
-3. **Check what's arrived** — confirm it actually worked
+<figure class="shot">
+  <img src="../../assets/screenshots/p3-tab2-question.png"
+       alt="Tab 2's 'Where are your dashboard's data files?' question, with 'In my app folder' selected and the size summary beneath it.">
+  <figcaption>Tab 2's "Where are your dashboard's data files?" question, with
+  "In my app folder" selected and the size summary beneath it.</figcaption>
+</figure>
 
-<figure class="shot shot--todo">
-  <div class="shot__box">
-    <span class="shot__label">Screenshot needed</span>
-    <span class="shot__file">assets/screenshots/p3-tab2-full.png</span>
-  </div>
-  <figcaption>Tab 2 in full, showing all three sections: the location list, the
-  transfer routes, and the check panel.</figcaption>
+| Answer | Choose it when | What happens |
+|---|---|---|
+| **In my app folder, with the code** | Your data sits next to your code, or in a folder inside it, and adds up to less than about a gigabyte | Published along with the app. Your code keeps reading files exactly as it does on your computer |
+| **In a separate folder on this server** | Your data is large, changes often, or already lives on a storage volume | Attached to the app when it runs. Update it any time without re-publishing |
+
+The application picks the first answer for you, unless your app folder is
+over about a gigabyte, or your code reads from a `data/` folder that your
+project doesn't have (so the data must be somewhere else). If your dashboard
+reads no data files at all, leave it as it is and go on to step 3.
+
+---
+
+## Option 1 · In my app folder
+
+**Nothing to do.** This is how most dashboards arrive: a `.csv`, a
+spreadsheet or a shapefile sitting right next to the code, read by its name:
+
+```r
+stations <- read.csv("stations.csv")
+sheds    <- sf::st_read("watersheds.shp")
+```
+
+Everything in your app folder is published with your dashboard, so those
+lines work unchanged. The tab shows the total size, for example:
+
+> Everything in your app folder is published with your dashboard — 3.5 MB in
+> all. Your code can keep reading its files exactly as it does on your own
+> computer.
+
+Two things to know:
+
+- **When a data file changes, publish again** (step 3) to update it. The
+  published copy doesn't follow your folder by itself.
+- **Keep it under about a gigabyte.** Every publish copies the whole folder
+  again, so large data makes every publish slow and fills the disk. Above
+  that size the tab shows a warning: move the data into one folder on a
+  storage volume and use Option 2 instead.
+
+This tool deliberately doesn't try to publish datasets of many gigabytes
+inside the app. Big data belongs on a storage volume.
+
+---
+
+## Option 2 · In a separate folder on this server
+
+The rest of this page is about this option: data on a storage volume,
+attached to your dashboard when it runs. It has four parts, top to bottom:
+
+1. **What your code calls that folder**
+2. **Where your data lives on this server**: pick the folder
+3. **How to get your data here**: three ways to upload it
+4. **Check what's arrived**: confirm it actually worked
+
+<figure class="shot">
+  <img src="../../assets/screenshots/p3-tab2-full.png"
+       alt="Tab 2 with 'In a separate folder' selected, showing the folder name, the location list, the transfer routes, and the check panel.">
+  <figcaption>Tab 2 with "In a separate folder" selected, showing the folder
+  name, the location list, the transfer routes, and the check panel.</figcaption>
 </figure>
 
 !!! tip "Do the upload first, then pick the folder"
@@ -24,18 +80,24 @@ This tab does three things, top to bottom:
     that's empty when you publish causes a failure that costs you a whole
     build.
 
----
+### What your code calls that folder
 
-## 1. Where your data will live
+Your data folder appears **inside** your app under a name, and that name has
+to be the one your code uses. If your code says
+`read.csv("data/counts.csv")`, the name is `data`, which is the default. If it
+says `read.csv("Inputs/counts.csv")`, type `Inputs` and press Enter.
+
+The name is all that matters. The folder on the server can be called
+anything.
+
+### Where your data lives on this server
 
 At the top is a list of every place data could go on this instance, best first.
 
-<figure class="shot shot--todo">
-  <div class="shot__box">
-    <span class="shot__label">Screenshot needed</span>
-    <span class="shot__file">assets/screenshots/p3-tab2-locations.png</span>
-  </div>
-  <figcaption>The "Where your data will live" list showing an attached volume
+<figure class="shot">
+  <img src="../../assets/screenshots/p3-tab2-locations.png"
+       alt="The 'Where your data lives on this server' list showing an attached volume with its free space, and the home folder below it.">
+  <figcaption>The "Where your data lives on this server" list showing an attached volume
   with its free space, and the home folder below it.</figcaption>
 </figure>
 
@@ -70,7 +132,7 @@ unusual cases.
     last and never preselected. Fine for trying things out; wrong for a real
     dataset.
 
-### Read the mapping line
+#### Read the mapping line
 
 Underneath the list, in fixed-width text, is the single most important line on
 this tab:
@@ -90,39 +152,19 @@ you're done thinking about paths.
 
 ---
 
-## 2. How to get your data here
+### How to get your data here
 
-Four routes, because researchers arrive with very different setups. Pick one.
+Three routes, because researchers arrive with very different setups. Pick one.
 
-<figure class="shot shot--todo">
-  <div class="shot__box">
-    <span class="shot__label">Screenshot needed</span>
-    <span class="shot__file">assets/screenshots/p3-tab2-routes.png</span>
-  </div>
-  <figcaption>The "How to get your data here" section with the four route
+<figure class="shot">
+  <img src="../../assets/screenshots/p3-tab2-routes.png"
+       alt="The 'How to get your data here' section with the three route options and the detail panel for the selected one.">
+  <figcaption>The "How to get your data here" section with the three route
   options and the detail panel for the selected one.</figcaption>
 </figure>
 
 Selecting a route shows what it's best for, and either a button that opens the
 right tool or a command already filled in with your instance's details.
-
-=== "Globus — large datasets"
-
-    **The right answer for tens of GB and up**, or anything you'd hate to
-    restart. Globus transfers in the background, retries automatically, resumes
-    after interruptions, and is supported natively by Jetstream2. Nothing to
-    install.
-
-    1. Click **Open Globus** — it opens in the desktop's browser
-    2. Log in with your institution's credentials
-    3. Set your source (your institution's storage, or Globus Connect Personal
-       on your own machine) and this instance as the destination
-    4. Start the transfer and close the browser — it keeps going and emails you
-       when it's done
-
-    If your institution has no endpoint,
-    [Globus Connect Personal](https://www.globus.org/globus-connect-personal)
-    turns your own laptop into one.
 
 === "Cloud storage"
 
@@ -141,7 +183,8 @@ right tool or a command already filled in with your instance's details.
 
 === "rsync / scp — from your own computer"
 
-    For a folder on your laptop, when you're comfortable with a terminal. The
+    **The right route for larger data** on your laptop, when you're
+    comfortable with a terminal — it resumes after an interruption. The
     application shows the exact command with your instance's IP and destination
     already filled in:
 
@@ -181,17 +224,15 @@ right tool or a command already filled in with your instance's details.
 
 ---
 
-## 3. Check what's arrived { #check-what-s-arrived }
+### Check what's arrived { #check-what-s-arrived }
 
 Press **Look in that folder now**. This is the point of the whole tab: every
 route above is just instructions, and this is what tells you whether they
 worked.
 
-<figure class="shot shot--todo">
-  <div class="shot__box">
-    <span class="shot__label">Screenshot needed</span>
-    <span class="shot__file">assets/screenshots/p3-tab2-verify.png</span>
-  </div>
+<figure class="shot">
+  <img src="../../assets/screenshots/p3-tab2-verify.png"
+       alt="The 'Check what's arrived' panel showing a successful listing: file count, total size, and the first few filenames.">
   <figcaption>The "Check what's arrived" panel showing a successful listing:
   file count, total size, and the first few filenames.</figcaption>
 </figure>
@@ -277,22 +318,16 @@ there's nothing to do.
 
 ---
 
-## If your project has no `data/` folder
+## Moved your data onto a volume? Use Option 2
 
-You'll see a slightly different message at the top of this tab:
+If you followed Part 2's advice and moved your data out of your project onto
+a storage volume, your app folder no longer holds it, so Option 1 has
+nothing to publish. Choose **In a separate folder on this server** and pick
+your volume, or your dashboard will start with no data.
 
-> This project doesn't include a `data/` folder of its own. If your dashboard
-> reads data files that live somewhere else on this server — a storage volume,
-> typically — choose that folder below and it will appear inside your app at
-> `/app/data`. If your dashboard doesn't read any data files, skip to step 3.
-
-**Read this carefully — it's not "skip this tab".** If you followed Part 2's
-advice and moved your data onto the volume, your project has no `data/` folder
-*precisely because you did the right thing*, and you still need to choose your
-volume here.
-
-Only skip if your dashboard genuinely reads no data files at all — everything
-is computed, or fetched from an API at run time.
+The application usually spots this for you: when your code reads files from
+`data/` and your project has no `data/` folder, it starts on the second
+option, and warns you (⚠) if you switch back to the first.
 
 ---
 

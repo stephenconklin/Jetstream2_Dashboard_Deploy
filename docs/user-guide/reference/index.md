@@ -18,7 +18,7 @@ maintaining the tooling rather than using it.
 
 -   :material-file-send: **[Getting files onto the instance](getting-your-files-onto-the-instance.md)**
 
-    Git, drag-and-drop, rsync, cloud storage and Globus — the reference behind
+    Git, drag-and-drop, rsync and cloud storage — the reference behind
     the application's *Your data* tab.
 
 -   :material-console-line: **[Command line equivalents](command-line.md)**

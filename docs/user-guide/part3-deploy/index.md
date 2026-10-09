@@ -25,6 +25,60 @@ meant to be done in order.
 
 ---
 
+## Finding your way around
+
+The window is built to tell you, at every moment, two separate things: **what's
+live now**, and **how far you've got** with what you're preparing.
+
+<figure class="shot shot--todo">
+  <div class="shot__box">
+    <span class="shot__label">Screenshot needed</span>
+    <span class="shot__file">assets/screenshots/p3-live-bar.png</span>
+  </div>
+  <figcaption>The top of the window: the live bar with a dashboard live and the
+  amber "different project" line, the key, and the tabs with their symbols.</figcaption>
+</figure>
+
+**The live bar**, across the top, is about the dashboard people can visit
+right now, whichever tab you're on. It reads *Nothing published yet* until you
+publish, then *LIVE — your-project · published 3 Oct, 14:02* with an **Open
+dashboard** button. Its second line says how what you're preparing relates to
+it:
+
+| It says | Meaning |
+|---|---|
+| *Same folder and settings as what's live* | Publishing again picks up any edits you've made to your files |
+| *You've changed the main file or the data settings* | Publishing applies those changes |
+| *This is a different project … publishing will replace it* (amber) | You'll be asked to confirm, with both folders named |
+| *Building a new version — the current dashboard stays up* | Your old dashboard keeps serving until the new one is ready |
+
+**The symbols** on each tab, and the coloured line at the top of tabs 1–3,
+show where each step stands. The same key is shown under the live bar:
+
+| Symbol | Means |
+|---|---|
+| ○ | To do — or not available yet |
+| ⚠ | Needs your attention — the line says what |
+| ◐ | Working — a publish is running |
+| ✓ | Done |
+| ✗ | Didn't finish — the reason is in the progress log |
+
+The symbol is never the whole message: the line at the top of the tab always
+says it in words.
+
+**Greyed out means "not yet", not "broken".** Tabs 2 and 3 open once step 1
+has found your dashboard. While a publish is running, tabs 1 and 2 are locked,
+since changing them couldn't affect a build that has already started. The
+publish button says why it's greyed, right beside it. Each step's **Next →**
+button lights up once that step is done.
+
+**The publish button says what it will do:** *Publish my dashboard* the first
+time, *Update my dashboard* after you've changed settings, *Publish again* when
+nothing has changed, and *Replace the live dashboard…* when you've picked a
+different project.
+
+---
+
 ## What the application actually does
 
 Worth knowing, because it changes how you read its error messages.

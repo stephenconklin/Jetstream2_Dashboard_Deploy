@@ -119,10 +119,13 @@ Full detail: [TLS](../reference/deployment.md#tls).
 
 -   :material-database-sync: **Changed the data**
 
-    Upload the new files to your volume, then press **Restart** on the Manage
-    tab.
+    **Data on a storage volume:** upload the new files there, then press
+    **Restart** on the Manage tab. **Seconds** — no rebuild, since that data
+    is attached at run time.
 
-    **Seconds.** No rebuild — data is attached at run time, not built in.
+    **Data in your app folder:** update the files there, then press
+    **Publish again**. It's published with the app, so it changes when the
+    app does.
 
 -   :material-code-tags: **Changed the code**
 

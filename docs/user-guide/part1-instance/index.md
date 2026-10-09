@@ -56,7 +56,7 @@ is the thing you'd least like to lose or re-upload.
 
 ## Log in to Exosphere
 
-Everything in Part 1 happens at **[exosphere.jetstream-cloud.org](https://exosphere.jetstream-cloud.org/)**.
+Everything in Part 1 happens at **[jetstream2.exosphere.app](https://jetstream2.exosphere.app/)**.
 
 Sign in with your ACCESS credentials, then choose the allocation you want to
 use. If you belong to more than one, pick deliberately — that's what gets
@@ -67,8 +67,8 @@ charged.
     <span class="shot__label">Screenshot needed</span>
     <span class="shot__file">assets/screenshots/p1-exosphere-home.png</span>
   </div>
-  <figcaption>The Exosphere home page after logging in, showing the allocation
-  selector and the <strong>Create</strong> button.</figcaption>
+  <figcaption>The Exosphere home page after logging in. Each allocation you
+  belong to is a card; click one to open it.</figcaption>
 </figure>
 
 !!! info "Exosphere vs. Horizon"

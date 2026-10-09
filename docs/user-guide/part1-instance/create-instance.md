@@ -11,7 +11,8 @@ is what turns this from a systems-administration exercise into a few clicks.
 
 ## 1. Start the Create Instance flow
 
-In Exosphere, click **Create** (top right) → **Instance**.
+In Exosphere, open your allocation (click its card on the home page), then click
+**Create** (top right) → **Instance**.
 
 You'll land on the image chooser.
 

@@ -2,14 +2,23 @@
 
 <p class="meta-line">15 minutes. This is the single most common cause of a dashboard that publishes successfully and then shows nothing but errors.</p>
 
-Your data does not travel inside your dashboard. It stays on the storage volume
-and is **attached** to your running dashboard at a fixed location. Get the path
-right and everything works; get it wrong and you get a build that succeeds
-followed by a page full of "file not found".
+Your data reaches your dashboard in one of two ways:
+
+- **Published with the app.** Data files in your project folder, whether next
+  to your code or in a folder inside it, are copied in with the code. Nothing
+  to set up, and your code reads them exactly as it does on your computer.
+  Right for small data, up to about a gigabyte.
+- **Attached from a storage volume.** The data stays on the volume and is
+  **attached** to your running dashboard at a fixed location. Right for large
+  data, or data you update often, since updating it needs no re-publish.
+
+Either way, get the path right and everything works. Get it wrong and the
+build succeeds, followed by a page full of "file not found". Most of this page
+is about the second way, which is the one with paths to get right.
 
 ---
 
-## The one picture that explains it
+## The one picture that explains attaching
 
 ```
 ON THE SERVER                             INSIDE YOUR RUNNING DASHBOARD
@@ -41,6 +50,14 @@ app.** Not the folder itself — its contents. Choose
 You never type those paths. What matters is that they're where the relative
 path `data/…` points from your app's working directory — so **`data/counts.csv`
 is the path that works in every framework.**
+
+!!! tip "Your code uses a different folder name?"
+
+    If your code reads `Data/counts.csv` or `inputs/counts.csv`, there's no
+    need to change it. Type that folder name (`Data`, `inputs`) under **What
+    your code calls that folder** in Part 3, step 2, and the attachment
+    appears under that name instead. On the command line it's
+    `DATA_SUBDIR=inputs`.
 
 ---
 
@@ -144,9 +161,29 @@ one line at the top of your entry file to bridge:
 
 ---
 
-## Two arrangements, both fine
+## Three arrangements, all fine
 
-### A. Data inside your project folder
+### A. Data files next to your code
+
+```
+my-dashboard/
+├── water_quality.R
+├── stations.csv
+└── watersheds.shp   (+ .dbf, .prj, .shx …)
+```
+
+```r
+stations <- read.csv("stations.csv")
+```
+
+The most common arrangement, and it **just works**: choose *In my app folder*
+in Part 3, step 2 (it's the default), and everything is published with the
+app. Change a file, publish again.
+
+Keep it small. Every publish copies the whole folder, and above about a
+gigabyte the application warns you to use arrangement C instead.
+
+### B. A `data/` folder inside your project
 
 ```
 my-dashboard/
@@ -156,15 +193,15 @@ my-dashboard/
     └── counts.csv
 ```
 
-Your project ships with a `data/` folder. The deployment notices this and
-**requires** you to choose a data location in Part 3 — you cannot publish
-without answering.
+You can go either way in Part 3, step 2:
 
-Note that whatever you choose is attached *over the top of* the `data/` folder
-you shipped. The files in your project's `data/` are still in the image, but
-they're hidden by the mount. This is why the next warning matters.
+- **In my app folder:** `data/` is published with the app, like arrangement A.
+- **In a separate folder on this server:** you choose a folder on your volume,
+  and it's attached *over the top of* the `data/` folder you shipped. The
+  files in your project's `data/` are left out of the published copy. This is
+  why the empty-folder warning below matters.
 
-### B. Data on the volume, not in the project
+### C. Data on the volume, not in the project
 
 ```
 my-dashboard/                        /media/volume/salmon-data/
@@ -180,15 +217,17 @@ Your code is unchanged — it still says `read.csv("data/counts.csv")` — becau
 the `data/` path is supplied by the attachment rather than by a folder you
 shipped.
 
-!!! warning "The trap in arrangement B"
+!!! warning "The trap in arrangement C"
 
     A project with no `data/` folder *looks* like it doesn't need a data
-    location, and the deployment won't force you to choose one. But it does
-    need one — you just moved the data out, which is exactly the right thing to
-    have done.
+    location. But it does — you just moved the data out, which is exactly the
+    right thing to have done.
 
-    **Choose your volume folder in Part 3, step 2 anyway.** If you don't, your
-    dashboard starts, finds no `data/` directory, and fails.
+    **Choose *In a separate folder on this server* in Part 3, step 2, and pick
+    your volume folder.** If you don't, your dashboard starts, finds no
+    `data/` directory, and fails. The application catches the common case:
+    when your code reads `data/…` paths and the folder isn't there, step 2
+    starts on that option and warns you if you switch away from it.
 
 ---
 
@@ -214,7 +253,11 @@ The order that avoids it entirely:
 
 ## Checking your paths before you upload
 
-Search your project for absolute paths. From your project folder:
+The application does this check for you the moment you select your project,
+and lists anything it finds under **Worth checking in your code** on tab 1:
+paths on your own computer, `setwd()`, file names whose capital letters don't
+match, files your code reads that aren't in the folder. To check before you
+upload, search your project for absolute paths. From your project folder:
 
 === "macOS / Linux"
 
@@ -230,7 +273,8 @@ Search your project for absolute paths. From your project folder:
     ```
 
 Anything this finds is a path that won't exist on the server. Every hit needs
-converting to a `data/`-relative path.
+converting to a relative path: just the file name for a file in your project
+folder, or `data/…` for attached data.
 
 Also worth checking for:
 
@@ -243,12 +287,14 @@ Also worth checking for:
 ## Data you write, not just read
 
 If your dashboard *writes* files — caching results, saving user uploads,
-exporting figures — write them under `data/` too. That folder is attached
-read-write, and anything written there lands on the volume and survives
-restarts and rebuilds.
+exporting figures — attach a data folder from your volume (arrangement B or C)
+and write them under `data/`. That folder is attached read-write, and anything
+written there lands on the volume and survives restarts and rebuilds.
 
-Anything written **elsewhere** inside the container is lost the moment the
-dashboard is restarted or republished.
+Anything written **elsewhere** inside the container is lost when the dashboard
+is republished, and possibly sooner. That includes data published with the
+app (arrangement A, or B with *In my app folder*): it's a copy, and the next
+publish replaces it.
 
 ```python
 # ✅ Survives
@@ -262,11 +308,13 @@ out = "/tmp/results.parquet"
 
 ## Updating your data later
 
-Because the data is attached rather than baked in, **updating it does not
-require rebuilding your dashboard.** Replace the files on the volume, then
-press **Restart** on the application's Manage tab. Seconds, not minutes.
+**Attached data** (on a volume) doesn't need a rebuild to update. Replace the
+files on the volume, then press **Restart** on the application's Manage tab.
+Seconds, not minutes. That's the main practical payoff of attaching it.
 
-That's the main practical payoff of doing all of this correctly.
+**Data published with the app** is updated by publishing again (Part 3,
+step 3). Simple, but it's a full publish each time, which is why large or
+frequently changing data is better attached.
 
 ---
 

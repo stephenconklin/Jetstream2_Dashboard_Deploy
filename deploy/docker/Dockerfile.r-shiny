@@ -61,15 +61,21 @@ FROM deps-base AS final
 
 COPY shiny-server.conf /etc/shiny-server/shiny-server.conf
 
+# Packages BEFORE the app's code, keyed on the lockfile alone. Docker reuses a
+# cached step only if nothing before it changed, so with the code copied in
+# first, editing one line of the app reinstalled every R package — 45 minutes
+# per "Publish again" for a geospatial project. Every R build has a renv.lock
+# by this point: build_and_run.sh generates one first when the project
+# doesn't ship it. renv::restore() installs into the image's site library and
+# uses the project folder only to find the lockfile, so the lockfile alone is
+# all it needs.
+COPY app/renv.lock /tmp/renv-project/renv.lock
+COPY install_deps.R /tmp/install_deps.R
+RUN Rscript /tmp/install_deps.R /tmp/renv-project
+
 RUN rm -rf /srv/shiny-server/*
 COPY app/ /srv/shiny-server/
 RUN rm -f /srv/shiny-server/apt.txt
-
-# Auto-detect and install whatever R packages the project actually uses:
-# renv.lock if the project ships one (exact pinned versions), otherwise a
-# static scan of its library()/require() calls via renv::dependencies().
-COPY install_deps.R /tmp/install_deps.R
-RUN Rscript /tmp/install_deps.R /srv/shiny-server
 
 RUN chown -R shiny:shiny /srv/shiny-server
 

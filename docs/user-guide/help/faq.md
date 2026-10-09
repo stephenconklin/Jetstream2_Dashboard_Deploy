@@ -135,9 +135,12 @@ Detection reads your code for framework-specific signals rather than trusting
 filenames — because `app.py` alone could be any of three frameworks plus Flask.
 
 It gets it wrong when there's a **leftover file** with signals from an old
-version. Delete or rename it.
+version. Pick the right main file on
+[tab 1](../part3-deploy/step1-your-app.md#your-dashboards-main-file) — when
+several files could be the app it asks you anyway — or delete or rename the
+leftover.
 
-If the ambiguity is genuine, force the choice on tab 3 →
+If the framework itself is wrong, force it on tab 3 →
 [Advanced](../part3-deploy/step3-publish.md#advanced-options).
 
 ### Can I use a Jupyter notebook?
@@ -159,16 +162,19 @@ Git makes updating much easier, though: `git push` on your machine,
 
 ### How big can my data be?
 
-As big as your volume. Volumes can be hundreds of gigabytes, and your dashboard
-reads from the volume directly rather than loading it all.
+As big as your volume, if it's attached from one. Volumes can be hundreds of
+gigabytes, and your dashboard reads from the volume directly rather than
+loading it all. Data published with the app (kept in your project folder)
+should stay under about a gigabyte.
 
 What matters more is how much your dashboard loads into **memory** at once —
 that's bounded by the instance size, not the volume.
 
 ### Do I have to rebuild when my data changes?
 
-**No.** Replace the files on the volume and press **Restart**. Seconds rather
-than minutes.
+**Not if it's on a volume.** Replace the files there and press **Restart**.
+Seconds rather than minutes. Data kept in your project folder is published
+with the app, so it's updated by publishing again.
 
 This is the payoff for attaching data at run time instead of building it in,
 and it's why the [data paths](../part2-prepare/data-paths.md) page is worth
@@ -176,18 +182,22 @@ getting right.
 
 ### Can my dashboard write files?
 
-Yes, under `data/` — that folder is attached read-write, and anything written
-there lands on the volume and survives restarts and republishes.
+Yes, if you attach a data folder from a volume (step 2, *In a separate folder
+on this server*): write under `data/`. That folder is attached read-write, and
+anything written there lands on the volume and survives restarts and
+republishes.
 
-Anything written elsewhere inside the container is lost on the next restart.
+Anything written elsewhere inside the container — including into data
+published with the app — is lost on the next republish.
 
 ### What if I don't have a volume?
 
-Small data can live inside your project folder, in a `data/` directory, and
-gets copied onto the instance with your code.
+Small data can live inside your project folder, next to your code or in a
+`data/` directory, and is published with the app. Choose *In my app folder* in
+step 2 (it's the default).
 
-Fine for a few hundred megabytes. Beyond that, every build gets slower and the
-instance's disk fills up. Create a volume.
+Fine up to about a gigabyte. Beyond that, every publish gets slower and the
+instance's disk fills up, and the application warns you. Create a volume.
 
 ---
 

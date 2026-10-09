@@ -56,8 +56,9 @@ reading your code, so you don't have to tell it.
 
 -   **R Shiny**
 
-    An `app.R`, or a `ui.R` + `server.R` pair, or an R Markdown document with
-    `runtime: shiny` in its front matter.
+    An `.R` file that calls `shinyApp()` — `app.R` or any other name — or a
+    `ui.R` + `server.R` pair, or an R Markdown document with `runtime: shiny`
+    in its front matter.
 
 -   **Plotly Dash**
 
