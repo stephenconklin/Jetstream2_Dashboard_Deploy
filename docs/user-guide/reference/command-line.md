@@ -157,5 +157,8 @@ running container records its own origin, so there's no state file to go stale.
 
 ---
 
+More commands by task — logs, disk, nginx, host health:
+**[Command cheat sheet](command-cheatsheet.md)**.
+
 Everything here in far more detail:
 **[Full deployment reference](deployment.md#command-reference)**.

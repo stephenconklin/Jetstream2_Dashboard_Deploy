@@ -60,6 +60,8 @@ sudo ./deploy/bootstrap.sh --check                # read-only status
 sudo ./deploy/bootstrap.sh --remove-proxy         # roll back to direct port-80 binding
 ```
 
+Host settings (`SERVER_NAME`, `APP_HOST_PORT` default 8080, `DATA_DIR`, nginx limits, swap/autoheal/ufw toggles) come from `deploy/deploy.env`, copied from `deploy/deploy.env.example`. It's gitignored, so `git pull` on an instance never conflicts with it — and nothing in the repo records what a given instance chose. Every key has a working default, so a run without the file is valid.
+
 Diagnose a running deployment (which layer is broken, not merely whether it's up):
 
 ```bash
@@ -81,14 +83,16 @@ Build the researcher guide (MkDocs Material, published to Read the Docs from `mk
 pip install -r docs/user-guide/requirements.txt && mkdocs serve
 ```
 
-Lint the shell scripts (the only automated check in the repo):
+Lint (the only automated check in the repo):
 
 ```bash
-./deploy/lint.sh                      # shellcheck -x over every tracked .sh
+./deploy/lint.sh                      # shellcheck -x over every tracked .sh, then python3 -m compileall deploy/gui
 git config core.hooksPath .githooks   # one-time: run it automatically pre-commit
 ```
 
-There's no CI and no test suite — beyond `lint.sh`, verifying a change means actually running one of the commands above (or reasoning carefully through the shell script / Dockerfile logic, since a real run requires Docker). Note `lint.sh` catches shell defects only; it says nothing about whether an image builds or an app starts.
+The pre-commit hook only fires when a `.sh` file (or `.githooks/`) is staged, so a GUI-only Python change skips it entirely — run `lint.sh` by hand after editing `deploy/gui/`.
+
+There's no CI and no test suite — beyond `lint.sh`, verifying a change means actually running one of the commands above (or reasoning carefully through the shell script / Dockerfile logic, since a real run requires Docker). Note `lint.sh` catches shell defects and Python syntax errors only; it says nothing about whether an image builds, an app starts, or the GUI behaves.
 
 Two shellcheck conventions worth knowing before editing these scripts: `build_and_run.sh` carries a file-wide `source-path=SCRIPTDIR` directive so `-x` can follow `lib/*.sh` (without it, every variable the sourced functions consume is reported as an unused assignment), and **any comment line beginning with the word "shellcheck" is parsed as a directive** — prose mentioning the tool must not start a line with its name, or the file fails to parse.
 

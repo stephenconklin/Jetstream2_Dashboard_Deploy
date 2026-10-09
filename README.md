@@ -127,6 +127,7 @@ Try it against a bundled example first — one per framework, in [`examples/`](e
 | 🔧 **[Deployment reference](docs/user-guide/reference/deployment.md)** | Every environment variable, health verdict, and design decision, with the reasoning. |
 | 📤 **[Getting files onto the instance](docs/user-guide/reference/getting-your-files-onto-the-instance.md)** | Git, drag-and-drop, rsync, cloud storage. |
 | ⌨️ **[Command line equivalents](docs/user-guide/reference/command-line.md)** | Every button in the application, and the command it runs. |
+| 📋 **[Command cheat sheet](docs/user-guide/reference/command-cheatsheet.md)** | Raw Docker, nginx, logs, disk and host-health commands, grouped by task. |
 
 <details>
 <summary><b>What's in this repository</b></summary>

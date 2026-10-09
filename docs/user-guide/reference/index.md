@@ -25,6 +25,11 @@ maintaining the tooling rather than using it.
 
     Every button in the application, and the command it runs.
 
+-   :material-clipboard-text: **[Command cheat sheet](command-cheatsheet.md)**
+
+    Everything else worth knowing from a terminal — raw Docker, nginx, logs,
+    disk and host health — grouped by task.
+
 </div>
 
 ---

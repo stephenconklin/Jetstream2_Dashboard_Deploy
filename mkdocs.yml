@@ -112,6 +112,7 @@ nav:
       - Full deployment reference: reference/deployment.md
       - Getting files onto the instance: reference/getting-your-files-onto-the-instance.md
       - Command line equivalents: reference/command-line.md
+      - Command cheat sheet: reference/command-cheatsheet.md
 
 extra:
   social:
