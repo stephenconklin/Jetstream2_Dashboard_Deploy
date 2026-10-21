@@ -53,8 +53,10 @@ map $http_upgrade $dashboard_conn_upgrade {
 
 # Rate limit keyed by client IP. The default sits far above what a human
 # driving a dashboard generates — one page load of a Shiny or Streamlit app is
-# a burst of dozens of asset and callback requests, hence the generous burst —
-# and far below a scanner sweep. Tune via deploy/deploy.env.
+# a burst of dozens of asset and callback requests, a self-served map dozens
+# of tile range requests per view, and a classroom behind one address shares
+# one allowance, hence the generous burst — and far below a scanner sweep.
+# Tune via deploy/deploy.env (see deploy.env.example for the measurements).
 limit_req_zone $binary_remote_addr zone=dashreq:10m rate=__RATE_LIMIT__;
 
 # Per-IP connection cap: the direct defence against the slow-client worker

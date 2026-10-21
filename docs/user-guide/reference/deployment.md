@@ -108,7 +108,7 @@ sudo ss -tlnp | grep -E ':80|:8080'
 - WebSockets. R Shiny, Python Shiny and Streamlit are useless without them, so `Connection` is set from a `map` rather than hardcoded, and `proxy_read_timeout` is long — a Shiny socket sits idle whenever nobody is clicking, and a short timeout tears it down mid-session as a "Disconnected from server" with nothing in the app's own log to explain it.
 - `proxy_buffering off`. These frameworks stream responses; buffering them makes the UI appear to freeze until the transfer finishes. Request buffering stays *on*, which is the half that protects the app from slow clients.
 
-Tune the rest — upload size, rate limit, connection cap, timeout — in `deploy/deploy.env` and re-run bootstrap. Edit the template, never `/etc/nginx/sites-available/dashboard`; the next bootstrap run overwrites the installed copy.
+Tune the rest — upload size, rate limit, connection cap, timeout — in `deploy/deploy.env` and re-run bootstrap. The rate limit defaults to 30 requests a second per visitor with bursts of 200. That's generous on purpose: a map that serves its own tiles makes 35 or more requests per view, and a workshop on one network arrives from a single address and shares one allowance. At the earlier 10/s with bursts of 60, a burst of 80 tile requests had 12 refused, which shows as blank map squares. Lower it in `deploy.env` for a stricter instance. Edit the template, never `/etc/nginx/sites-available/dashboard`; the next bootstrap run overwrites the installed copy.
 
 ### The `/_deploy/` prefix is reserved
 
