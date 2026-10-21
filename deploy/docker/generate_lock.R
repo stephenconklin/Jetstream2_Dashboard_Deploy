@@ -14,9 +14,37 @@ project_dir <- if (length(args) >= 1) args[[1]] else "."
 
 # See install_deps.R for why both options are needed: rocker images point
 # "CRAN" at a frozen Posit Package Manager snapshot, and renv prefers that
-# over options("repos") unless explicitly overridden.
-options(renv.config.repos.override = "https://cloud.r-project.org")
-options(repos = c(CRAN = "https://cloud.r-project.org"))
+# over options("repos") unless explicitly overridden. Kept identical to
+# install_deps.R, so the lockfile is resolved where the build installs from.
+#
+# Ready-built Linux packages rather than compiling every package from source,
+# which is most of a 20-minute R build. Posit Package Manager builds CRAN for
+# each Ubuntu release (Rocker's images are Ubuntu) and serves the build that
+# matches this image's release; anything it hasn't built comes as source and
+# compiles as before. "latest" is the rolling repository, so a recently
+# released version is there too. It decides binary or source from the
+# User-Agent, which has to name this R — R's default doesn't. Anything that
+# isn't Ubuntu on x86_64 keeps the plain CRAN mirror.
+cran_repo <- local({
+  os <- tryCatch(readLines("/etc/os-release"), error = function(e) character())
+  field <- function(key) {
+    line <- grep(sprintf("^%s=", key), os, value = TRUE)
+    if (length(line)) gsub('^[^=]*=|"', "", line[[1]]) else ""
+  }
+  codename <- field("VERSION_CODENAME")
+  if (identical(field("ID"), "ubuntu") && nzchar(codename) &&
+      identical(R.version$arch, "x86_64")) {
+    sprintf("https://packagemanager.posit.co/cran/__linux__/%s/latest", codename)
+  } else {
+    "https://cloud.r-project.org"
+  }
+})
+options(HTTPUserAgent = sprintf(
+  "R/%s R (%s)", getRversion(),
+  paste(getRversion(), R.version["platform"], R.version["arch"], R.version["os"])))
+message("Installing R packages from ", cran_repo)
+options(renv.config.repos.override = cran_repo)
+options(repos = c(CRAN = cran_repo))
 
 if (!requireNamespace("renv", quietly = TRUE)) install.packages("renv")
 

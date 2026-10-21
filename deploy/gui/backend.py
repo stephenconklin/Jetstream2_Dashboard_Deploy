@@ -121,9 +121,17 @@ class ProjectInfo:
     def candidates(self) -> list[str]:
         """Every file that could be the app's main file.
 
-        The shell separates them with "/", the one character a file name
-        cannot contain, so this split is exact.
+        Sent as numbered ``entry_candidate_N`` keys, because an R main file
+        can be in a subfolder and its path then holds the "/" that the older
+        ``entry_candidates`` value is split on. That split is the fallback for
+        a shell from before the numbered keys existed.
         """
+        numbered = [(int(k[len("entry_candidate_"):]), v)
+                    for k, v in self.extra.items()
+                    if k.startswith("entry_candidate_")
+                    and k[len("entry_candidate_"):].isdigit()]
+        if numbered:
+            return [v for _, v in sorted(numbered) if v]
         return [c for c in self.entry_candidates.split("/") if c]
 
     @property

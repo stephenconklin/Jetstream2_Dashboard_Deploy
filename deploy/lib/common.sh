@@ -144,10 +144,13 @@ print_dry_run_summary() {
   echo "Entry point:     $ENTRY_POINT_DESC"
   if [[ "$ENTRY_STATE" == "ambiguous" ]]; then
     echo "                 (a deploy will stop until ENTRY_FILE names one of these)"
+  elif [[ "$FRAMEWORK" == "r-shiny" && "$ENTRY_FILE" == */* ]]; then
+    echo "                 (in a subfolder — the build adds a top-level app.R that runs it)"
   elif [[ "$FRAMEWORK" == "r-shiny" && -n "$ENTRY_FILE" && "$ENTRY_FILE" != "app.R" ]]; then
     echo "                 (not named app.R — the build adds an app.R that runs it)"
   fi
   echo "Base image:      $BASE_IMAGE"
+  [[ -n "${BASE_IMAGE_NOTE:-}" ]] && echo "                 ($BASE_IMAGE_NOTE)"
   echo "Dependencies:    $deps_status"
   # When absent, say what to do about it rather than just "none". Moving
   # data out of the project onto a storage volume is the recommended
@@ -201,9 +204,22 @@ print_dry_run_porcelain() {
   echo "entry_file=${ENTRY_FILE:-}"
   echo "entry_point_desc=$ENTRY_POINT_DESC"
   echo "entry_state=$ENTRY_STATE"
-  # "/"-separated: the one character that can never appear in a file name.
-  echo "entry_candidates=$ENTRY_CANDIDATES"
+  # Numbered like code_note_N, since an R main file can now be in a
+  # subfolder and its path holds the "/" that entry_candidates is split on.
+  # entry_candidates stays for existing callers; it is exact only while no
+  # candidate has a subfolder.
+  echo "entry_candidates=${ENTRY_CANDIDATES//$'\n'/\/}"
+  local candidate i=0
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    i=$((i + 1))
+    echo "entry_candidate_$i=$candidate"
+  done <<< "$ENTRY_CANDIDATES"
+  echo "entry_candidate_count=$i"
   echo "base_image=$BASE_IMAGE"
+  echo "base_image_source=${BASE_IMAGE_SOURCE:-}"
+  echo "lang_version=${LANG_VERSION:-}"
+  echo "base_image_note=${BASE_IMAGE_NOTE:-}"
   echo "deps_state=$deps_state"
   echo "uses_geospatial=$uses_geospatial"
   echo "has_data_dir=$has_data_dir"
@@ -406,7 +422,10 @@ generate_requirements_from_uv() {
 #    file instead would break anything in their code that refers to it.
 #    shinyAppFile() when the file ends in its own shinyApp() call; otherwise
 #    the file builds `ui` and `server` for RStudio's "Run App" button, so
-#    source it and finish the job ourselves.
+#    source it and finish the job ourselves. The same shinyAppFile() line
+#    serves a main file in a subfolder (app/app.R): Shiny runs it from its
+#    own folder and loads that folder's R/ and www/, just as
+#    shiny::runApp("app") did on the researcher's machine.
 #
 # 2. An .Rprofile that activates renv is disabled. Shiny Server starts R in
 #    the app folder, so R runs the project's .Rprofile — and a

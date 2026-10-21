@@ -19,11 +19,12 @@ installs what it finds, and records the result.
 | | Without a `renv.lock` | With one |
 |---|---|---|
 | Which versions get installed | Whatever is newest on CRAN today | The versions you tested with |
+| Which R it's built on | R 4.4.1 | The R you made the lockfile with |
 | First build time | Roughly **doubled** — packages are installed once to work out the list, then again to install from it | Normal |
 | Rebuild next year | May differ from today's, or fail | Identical |
 | Packages loaded dynamically | Missed — the scan only sees literal `library(x)` calls | Included |
 
-That second row is the one people feel. An R geospatial build that takes 45
+The build-time row is the one people feel. An R geospatial build that takes 45
 minutes with a lockfile can take an hour and a half without one.
 
 !!! danger "The version-drift trap"

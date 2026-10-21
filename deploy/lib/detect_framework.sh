@@ -6,19 +6,24 @@
 #
 # Reads PROJECT_DIR, plus two optional overrides from the caller:
 #   FRAMEWORK  - force the framework
-#   ENTRY_FILE - force the main file (a file directly inside PROJECT_DIR)
+#   ENTRY_FILE - force the main file: a file directly inside PROJECT_DIR,
+#                or for R Shiny a path within it such as app/app.R
 #
 # Sets on success:
 #   FRAMEWORK, ENTRY_POINT_DESC
-#   ENTRY_FILE       - the main file (empty only for an R ui.R/server.R pair
-#                      or a Shiny .Rmd, which are served by convention)
+#   ENTRY_FILE       - the main file, relative to PROJECT_DIR (empty only for
+#                      an R ui.R/server.R pair or a Shiny .Rmd, which are
+#                      served by convention). For R Shiny it may be in a
+#                      subfolder, e.g. app/app.R.
 #   ENTRY_STATE      - conventional | detected | chosen | ambiguous, where
-#                      `detected` means an R main file not named app.R (the
-#                      build adds an app.R that runs it), and `ambiguous`
-#                      means several files could be the app and a deploy will
-#                      refuse to guess until ENTRY_FILE picks one
-#   ENTRY_CANDIDATES - every file that could be the main file, separated by
-#                      "/" (the one character a file name can never contain)
+#                      `detected` means an R main file not named app.R or not
+#                      at the top level (the build adds an app.R that runs
+#                      it), and `ambiguous` means several files could be the
+#                      app and a deploy will refuse to guess until ENTRY_FILE
+#                      picks one
+#   ENTRY_CANDIDATES - every file that could be the main file, one per line.
+#                      Not "/"-separated as it once was: a subfolder path
+#                      contains one.
 
 # --- Per-file signals ----------------------------------------------------
 # One predicate per framework, each answering "does THIS file look like an
@@ -61,7 +66,12 @@ file_is_streamlit() {
 
 # Appends a file name to ENTRY_CANDIDATES.
 add_entry_candidate() {
-  ENTRY_CANDIDATES="${ENTRY_CANDIDATES:+$ENTRY_CANDIDATES/}$1"
+  ENTRY_CANDIDATES="${ENTRY_CANDIDATES:+$ENTRY_CANDIDATES$'\n'}$1"
+}
+
+# Whether a file name is already in ENTRY_CANDIDATES.
+entry_candidate_listed() {
+  grep -qxF -- "$1" <<< "$ENTRY_CANDIDATES"
 }
 
 # Top-level .R files that call shinyApp() — every file that could plausibly
@@ -75,6 +85,39 @@ list_r_entry_candidates() {
       ui.R|server.R|global.R) continue ;;
     esac
     file_calls_shiny_app "$f" && basename "$f"
+  done
+  return 0
+}
+
+# Folders one level down that hold part of an app, or something that isn't
+# an app, rather than an app of their own. R/ is the module folder Shiny
+# sources automatically, and a golem package's R/run_app.R calls shinyApp()
+# inside a function; inst/ has its own golem message in detect_framework().
+R_SUBFOLDERS_NOT_APPS=(R renv inst tests testthat www rsconnect packrat)
+
+# The same search one folder down, as "<folder>/<file>" — only consulted when
+# the top level has no app at all. Researchers commonly keep the app in its
+# own folder beside data/ and config files (app/app.R, run with
+# shiny::runApp("app")), and Shiny runs a file from its own folder, so code
+# written that way resolves its paths exactly as it did on their machine.
+# One level only: deeper, and the odds of picking up a stray example or test
+# app outrun the odds of finding the real one.
+list_r_subfolder_entry_candidates() {
+  local dir name skip f
+  for dir in "$PROJECT_DIR"/*/; do
+    [[ -d "$dir" ]] || continue
+    name="$(basename "$dir")"
+    [[ "$name" == "${DATA_SUBDIR:-data}" ]] && continue
+    for skip in "${R_SUBFOLDERS_NOT_APPS[@]}"; do
+      [[ "$name" == "$skip" ]] && continue 2
+    done
+    for f in "$dir"*.R "$dir"*.r; do
+      [[ -f "$f" ]] || continue
+      case "$(basename "$f")" in
+        ui.R|server.R|global.R) continue ;;
+      esac
+      file_calls_shiny_app "$f" && printf '%s/%s\n' "$name" "$(basename "$f")"
+    done
   done
   return 0
 }
@@ -100,10 +143,8 @@ detect_r_shiny() {
     ENTRY_POINT_DESC="app.R"
     # app.R is a candidate even if its shinyApp() call is split oddly enough
     # for the grep above to miss it, since Shiny Server will run it anyway.
-    case "/$ENTRY_CANDIDATES/" in
-      */app.R/*) ;;
-      *) ENTRY_CANDIDATES="app.R${ENTRY_CANDIDATES:+/$ENTRY_CANDIDATES}" ;;
-    esac
+    entry_candidate_listed "app.R" \
+      || ENTRY_CANDIDATES="app.R${ENTRY_CANDIDATES:+$'\n'$ENTRY_CANDIDATES}"
     return 0
   fi
   if [[ -f "$PROJECT_DIR/server.R" ]]; then
@@ -121,12 +162,18 @@ detect_r_shiny() {
     fi
   done
 
+  if [[ -z "$ENTRY_CANDIDATES" ]]; then
+    while IFS= read -r candidate; do
+      add_entry_candidate "$candidate"
+    done < <(list_r_subfolder_entry_candidates)
+  fi
+
   case "$ENTRY_CANDIDATES" in
     "")
       return 1 ;;
-    */*)
+    *$'\n'*)
       ENTRY_STATE="ambiguous"
-      ENTRY_POINT_DESC="not yet chosen — more than one file could be the app: ${ENTRY_CANDIDATES//\// }"
+      ENTRY_POINT_DESC="not yet chosen — more than one file could be the app: ${ENTRY_CANDIDATES//$'\n'/ }"
       ;;
     *)
       ENTRY_FILE="$ENTRY_CANDIDATES"
@@ -200,7 +247,7 @@ detect_python_framework() {
   for pyfile in "${files[@]+"${files[@]}"}"; do
     "$predicate" "$pyfile" || continue
     [[ -z "$found" ]] && found="$(basename "$pyfile")"
-    candidates="${candidates:+$candidates/}$(basename "$pyfile")"
+    candidates="${candidates:+$candidates$'\n'}$(basename "$pyfile")"
   done
   [[ -n "$found" ]] || return 1
   ENTRY_FILE="$found"
@@ -228,8 +275,19 @@ entry_file_fail() {
 resolve_chosen_entry_file() {
   local path="$PROJECT_DIR/$ENTRY_FILE"
   if [[ "$ENTRY_FILE" == */* ]]; then
-    entry_file_fail "must be a file directly inside $PROJECT_DIR, not in a subfolder." \
-      "Shiny Server and the Python servers all run the app from the project's top level."
+    case "$ENTRY_FILE" in
+      /*|./*|../*|*/./*|*/../*|*/.|*/..|*//*)
+        entry_file_fail "must be a path inside $PROJECT_DIR written from there, like app/app.R." ;;
+    esac
+    # Shiny runs an R file from its own folder (see prepare_r_build_copy),
+    # but gunicorn, `shiny run` and Streamlit are started in the project's
+    # top level and import the main file from there.
+    case "$ENTRY_FILE" in
+      *.R|*.r) ;;
+      *) entry_file_fail "must be directly inside $PROJECT_DIR, not in a subfolder." \
+           "Only an R Shiny main file can be in a subfolder: the Python servers run" \
+           "the app from the project's top level." ;;
+    esac
   fi
   [[ -f "$path" ]] || entry_file_fail "no such file in $PROJECT_DIR."
 
@@ -240,6 +298,13 @@ resolve_chosen_entry_file() {
       if ! file_calls_shiny_app "$path" && ! file_defines_ui_and_server "$path"; then
         entry_file_fail "doesn't look like a Shiny app." \
           "Expected a shinyApp(...) call, or both a 'ui <-' and a 'server <-' definition."
+      fi
+      # The build runs a subfolder file with shinyAppFile(), which needs the
+      # file to return the app itself; the source()-then-shinyApp() wrapper
+      # used for a top-level file would run its code from the wrong folder.
+      if [[ "$ENTRY_FILE" == */* ]] && ! file_calls_shiny_app "$path"; then
+        entry_file_fail "is in a subfolder, so it must end by calling shinyApp(ui, server) itself." \
+          "Add that line at the bottom of the file, or move the file to the top of your folder."
       fi
       # Shiny Server always runs app.R when there is one, and the build adds
       # an app.R to run any other choice — the two can't both be app.R.
@@ -290,8 +355,8 @@ resolve_chosen_entry_file() {
     ENTRY_CANDIDATES=""
     detect_r_shiny >/dev/null || true
     # detect_r_shiny may have filled in its own idea of the entry point.
-    # The explicit choice wins.
-    ENTRY_FILE="${path##*/}"
+    # The explicit choice wins, path and all.
+    ENTRY_FILE="${path#"$PROJECT_DIR"/}"
     ENTRY_STATE="chosen"
     ENTRY_POINT_DESC="$ENTRY_FILE"
   else
@@ -300,10 +365,7 @@ resolve_chosen_entry_file() {
     ENTRY_FILE="${path##*/}"
     ENTRY_POINT_DESC="$FRAMEWORK entry point ($ENTRY_FILE)"
   fi
-  case "/$ENTRY_CANDIDATES/" in
-    */"$ENTRY_FILE"/*) ;;
-    *) add_entry_candidate "$ENTRY_FILE" ;;
-  esac
+  entry_candidate_listed "$ENTRY_FILE" || add_entry_candidate "$ENTRY_FILE"
 }
 
 # A forced FRAMEWORK bypasses *framework* detection, but the main file still
@@ -443,7 +505,8 @@ detect_framework() {
     echo "shinyApp(), and no recognizable Dash/Python Shiny/Streamlit .py file." >&2
     echo >&2
     echo "What's looked for:" >&2
-    echo "  R Shiny:       any .R file calling shinyApp(), ui.R + server.R, or an .Rmd" >&2
+    echo "  R Shiny:       any .R file calling shinyApp() (at the top of the folder, or" >&2
+    echo "                 one folder down, like app/app.R), ui.R + server.R, or an .Rmd" >&2
     echo "                 with 'runtime: shiny'" >&2
     echo "  Plotly Dash:   a .py file with 'import dash' and 'server = app.server'" >&2
     echo "  Python Shiny:  a .py file with 'from shiny import App' and a top-level App(...)" >&2

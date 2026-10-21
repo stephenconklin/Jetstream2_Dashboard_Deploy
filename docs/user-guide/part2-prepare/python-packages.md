@@ -167,7 +167,15 @@ reveals the second.
     packages have prebuilt wheels for the Python they were released against, so
     an older base image skips compiling entirely.
 
-    In Part 3, on the **Publish** tab, open **Advanced** and set
+    The simplest way is to record the Python your project was written for, so
+    it's used automatically: a file named `.python-version` next to your code
+    containing just the version, such as `3.7`. pyenv and uv create this file
+    for you. A `runtime.txt` (`python-3.7.17`) works too, as does a
+    `requires-python` range in `pyproject.toml` that rules out the default.
+    The dry run and the **Publish** tab both say which Python was chosen and
+    why.
+
+    Or, in Part 3, on the **Publish** tab, open **Advanced** and set
     **Base image** to `python:3.7-slim` (or `3.8`, `3.9` — try the one your
     project was written for). See
     [Step 3 · Publish](../part3-deploy/step3-publish.md#advanced-options).

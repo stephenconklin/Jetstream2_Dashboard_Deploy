@@ -139,16 +139,19 @@ setting made for one dashboard never carries over to the next.
     [it shouldn't](../part2-prepare/entry-point.md#your-app-must-listen-on-all-interfaces-not-just-localhost).
 
 **Base image**
-:   The starting environment your dashboard is built on top of. This is the
-    **escape hatch for old projects**, and it fixes more failures than anything
-    else here.
+:   The starting environment your dashboard is built on top of. Usually
+    leave it blank: the R or Python version is taken from your project when
+    it records one. For R that's your `renv.lock`; for Python, a
+    `.python-version`, `runtime.txt` or `requires-python`. Otherwise it's
+    R 4.4.1 or Python 3.11. The summary above the button says which was chosen
+    and why. Set it only when that choice doesn't build:
 
     | Situation | Try |
     |---|---|
-    | Old Python project, a package won't compile | `python:3.9-slim`, then `3.8`, then `3.7` |
-    | Modern Python project | leave blank (`python:3.11-slim`) |
-    | R project needing more geospatial libraries | `rocker/geospatial:4.4.1` |
-    | R project, heavy tidyverse use | `rocker/shiny-verse` |
+    | Old Python project, a package won't compile | `python:3.9-slim`, then `3.8`, then `3.7` (or add a `.python-version` to the project) |
+    | Modern Python project | leave blank |
+    | R project needing more geospatial libraries | leave blank: geospatial projects are detected; or `rocker/geospatial:<your R version>` |
+    | R project, heavy tidyverse use | `rocker/shiny-verse:<your R version>` |
 
     The reasoning, and the specific error messages that point to it, are in
     [When an old project's pins no longer build](../part2-prepare/python-packages.md#when-an-old-project-wont-build).

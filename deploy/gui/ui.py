@@ -214,13 +214,20 @@ def _set_subtree_enabled(widget, enabled: bool) -> None:
 
 
 def _has_code_files(path: str) -> bool:
-    """Whether a folder has any top-level .R or .py file to choose from."""
+    """Whether a folder has an .R or .py file to choose from, at the top or
+    one folder down (where an R app may keep its main file, e.g. app/app.R)."""
     from pathlib import Path
     try:
-        return any(p.suffix in (".R", ".r", ".py")
-                   for p in Path(path).iterdir() if p.is_file())
+        for p in Path(path).iterdir():
+            if p.is_file() and p.suffix in (".R", ".r", ".py"):
+                return True
+            if p.is_dir() and not p.name.startswith(".") and any(
+                    c.is_file() and c.suffix in (".R", ".r", ".py")
+                    for c in p.iterdir()):
+                return True
     except OSError:
         return False
+    return False
 
 
 def _selectable_text(parent, content: str, height: int = 2) -> tk.Text:
@@ -526,14 +533,19 @@ class AppTab(ttk.Frame):
             filetypes=[("R or Python files", "*.R *.r *.py"), ("All files", "*")])
         if not chosen:
             return
-        if Path(chosen).resolve().parent != Path(project_dir).resolve():
+        # Sent as a path from the project folder (app/app.R). Whether a file
+        # in a subfolder can be the main file is the shell's to decide (an R
+        # one can, a Python one can't), and its refusal is shown verbatim.
+        try:
+            relative = Path(chosen).resolve().relative_to(
+                Path(project_dir).resolve())
+        except ValueError:
             messagebox.showerror(
                 "Choose a file inside your dashboard folder",
-                f"The main file has to be directly inside\n{project_dir}\n"
-                "— not in a subfolder, and not somewhere else. Your dashboard "
-                "is run from that folder.")
+                f"The main file has to be inside\n{project_dir}\n"
+                "— your dashboard is published from that folder.")
             return
-        self._adopt(project_dir, entry_file=Path(chosen).name)
+        self._adopt(project_dir, entry_file=relative.as_posix())
 
     def _show_notes(self, info: backend.ProjectInfo | None) -> None:
         notes = info.code_notes if info is not None else []
@@ -571,6 +583,11 @@ class AppTab(ttk.Frame):
             self.entry_note.set(
                 "More than one file in this folder could be your dashboard. "
                 "Pick the one you run to start it.")
+        elif info.framework == "r-shiny" and "/" in info.entry_file:
+            self.entry_note.set(
+                f"Your main file is in a subfolder ({info.entry_file}). That's "
+                "fine: publishing adds a small app.R at the top of your folder "
+                "that runs it from there. Nothing in your folder is changed.")
         elif info.framework == "r-shiny" and info.entry_file != "app.R":
             self.entry_note.set(
                 f"Your main file is called {info.entry_file} rather than app.R. "
@@ -1182,6 +1199,15 @@ class DeployTab(ttk.Frame):
                      "Pick its main file in step 1 first."]
         elif info.entry_file:
             lines.append(f"Main file: {info.entry_file}")
+        # Which R or Python it will be built on, and why: the version follows
+        # the project's own lockfile when it has one, so the reason is the
+        # useful half. Not re-rendered as the Advanced field is typed in, so
+        # it describes the automatic choice and says what overrides it.
+        if info.base_image:
+            note = info.extra.get("base_image_note", "")
+            lines.append(f"Built on: {info.base_image}"
+                         + (f" — {note}" if note else "")
+                         + " (unless you set a base image under Advanced)")
         if info.deps_state == "missing":
             lines.append(
                 "\nBefore this can be published it needs a requirements.txt "

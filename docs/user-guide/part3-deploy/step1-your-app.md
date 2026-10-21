@@ -189,12 +189,13 @@ likely to see:
     Otherwise:
 
     - Check you selected the folder **containing** the app file, not its parent
-    - Check the file is at the top level, not in `src/` or `inst/`
+    - Check the file is where it can be found: for R, at the top or one
+      folder down (`app/app.R`); for Python, at the top
     - Check the signals in
       [Check your file layout](../part2-prepare/entry-point.md)
 
-    If your app lives in a subfolder, add a shim — see
-    [the starting file must be at the top level](../part2-prepare/entry-point.md#the-starting-file-must-be-at-the-top-level).
+    See [where the starting file can be](../part2-prepare/entry-point.md#the-starting-file-must-be-at-the-top-level)
+    for apps deeper in a subfolder, and for Python apps in one.
 
 ??? failure "“That file can't be used”"
 

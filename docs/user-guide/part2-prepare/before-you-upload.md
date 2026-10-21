@@ -12,9 +12,10 @@ Work down it. Every item is something that has cost somebody a failed build.
 
 - [ ] **The app runs on your own computer, right now**, from a fresh start.
       Not "it worked last month" — run it.
-- [ ] **The starting file is at the top level** of the project folder. Any
-      name is fine (`water_quality.R` works as well as `app.R`), and so are
-      `ui.R`+`server.R` or an `.Rmd` with `runtime: shiny`.
+- [ ] **The starting file is at the top level** of the project folder, or
+      for R one folder down (`app/app.R`). Any name is fine
+      (`water_quality.R` works as well as `app.R`), and so are
+      `ui.R`+`server.R` or an `.Rmd` with `runtime: shiny` at the top level.
 - [ ] **Dash only:** `app.py` contains `server = app.server`.
 - [ ] **No leftover app files** from an earlier version. They won't break
       anything, but you'll be asked which file is the real one.

@@ -43,15 +43,20 @@
 #   FRAMEWORK  - force framework selection (r-shiny|dash|python-shiny|streamlit),
 #                bypassing auto-detection entirely. Use this if detection
 #                guesses wrong or a project is genuinely ambiguous.
-#   ENTRY_FILE - name the app's main file (directly inside the project), e.g.
+#   ENTRY_FILE - name the app's main file, relative to the project, e.g.
 #                ENTRY_FILE=cc_wq.R. The framework is inferred from it. An R
-#                main file needn't be called app.R: the build adds an app.R
-#                that runs it. Required when several files could be the app.
-#   BASE_IMAGE - override the base image. If unset:
-#                - R Shiny: auto-detected — rocker/geospatial:4.4.1 if the
-#                  project's .R/.Rmd files use sf/terra/raster/stars/rgdal/rgeos,
-#                  otherwise rocker/r-ver:4.4.1 (bare R).
-#                - Dash/Python Shiny/Streamlit: python:3.11-slim.
+#                main file needn't be called app.R, and may be one folder down
+#                or deeper (ENTRY_FILE=app/app.R): the build adds a top-level
+#                app.R that runs it. Python main files must be at the top.
+#                Required when several files could be the app.
+#   BASE_IMAGE - override the base image. If unset (see lib/base_image.sh):
+#                - R Shiny: the R version recorded in renv.lock, or 4.4.1
+#                  without one — on rocker/geospatial if the project's
+#                  .R/.Rmd files use sf/terra/raster/stars/rgdal/rgeos,
+#                  otherwise rocker/r-ver (bare R).
+#                - Dash/Python Shiny/Streamlit: the Python version from
+#                  .python-version, runtime.txt, or requires-python in
+#                  pyproject.toml/uv.lock; otherwise python:3.11-slim.
 #   BUILD_PLATFORM - override the `docker build --platform` target. Normally
 #                unset: the 3 Python frameworks build natively on any
 #                architecture, and R Shiny auto-selects linux/amd64 when the
@@ -94,6 +99,7 @@ TOOLING_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$TOOLING_DIR/lib/common.sh"
 source "$TOOLING_DIR/lib/detect_framework.sh"
 source "$TOOLING_DIR/lib/check_code.sh"
+source "$TOOLING_DIR/lib/base_image.sh"
 
 DRY_RUN=0
 PORCELAIN=0
@@ -191,13 +197,11 @@ if [[ "$FRAMEWORK" == "r-shiny" ]]; then
   # would otherwise run it twice (once here, once for the warning below).
   uses_geospatial_packages && USES_GEOSPATIAL=1
 
-  if [[ -z "${BASE_IMAGE:-}" ]]; then
-    if [[ "$USES_GEOSPATIAL" -eq 1 ]]; then
-      BASE_IMAGE="rocker/geospatial:4.4.1"
-      echo "Detected geospatial packages (sf/terra/raster/...) — using BASE_IMAGE=$BASE_IMAGE" >&2
-    else
-      BASE_IMAGE="rocker/r-ver:4.4.1"
-    fi
+  # The R version from renv.lock when there is one, the default otherwise;
+  # rocker/geospatial rather than rocker/r-ver for geospatial projects.
+  pick_r_base_image
+  if [[ "$USES_GEOSPATIAL" -eq 1 && "$BASE_IMAGE_SOURCE" != "override" ]]; then
+    echo "Detected geospatial packages (sf/terra/raster/...) — using BASE_IMAGE=$BASE_IMAGE" >&2
   fi
 
   HAS_RENV_LOCK=0
@@ -223,7 +227,8 @@ else
   # pinned dependency set under a different name — generate requirements.txt
   # from it rather than failing (done after the dry-run gate, since it
   # writes into the project directory).
-  BASE_IMAGE="${BASE_IMAGE:-python:3.11-slim}"
+  # The Python version the project records, if it records one.
+  pick_python_base_image
   if [[ -f "$PROJECT_DIR/requirements.txt" ]]; then
     DEPS_STATUS="requirements.txt present"
     DEPS_STATE="present"
@@ -273,10 +278,14 @@ fi
 # ask), but a real deploy must not guess which of several apps to publish.
 if [[ "$ENTRY_STATE" == "ambiguous" ]]; then
   echo "More than one file in $PROJECT_DIR could be the dashboard:" >&2
-  printf '%s\n' "$ENTRY_CANDIDATES" | tr '/' '\n' | sed 's/^/  /' >&2
+  printf '%s\n' "$ENTRY_CANDIDATES" | sed 's/^/  /' >&2
   echo "Set ENTRY_FILE=<one of the above> to say which one to publish, and re-run." >&2
   exit 1
 fi
+
+# The version a project records may not have an image yet; checked here
+# rather than above the gate because it asks the registry.
+confirm_base_image_published
 
 # A base image from the other language can never work, and fails late and
 # cryptically: an R build on python:*-slim gets through Shiny Server's install

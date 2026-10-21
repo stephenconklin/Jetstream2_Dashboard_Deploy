@@ -128,19 +128,39 @@ level of your project folder, and it must contain a recognisable **signal**.
 
 ## The rules that catch people out
 
-### The starting file must be at the top level
-
-Not in `src/`, not in `app/`, not in `inst/`. The tooling looks in the folder
-you point it at, and nowhere below it.
-
-If your project keeps its app in a subfolder, the fix is a **shim** — a tiny
-file at the top level that hands off to the real one:
+### Where the starting file can be { #the-starting-file-must-be-at-the-top-level }
 
 === "R Shiny"
 
+    At the top of your project folder, or **one folder down**. Many projects
+    keep the app in its own folder beside `data/` and their settings, and run
+    it with `shiny::runApp("app")`:
+
+    ```text
+    my-project/
+    ├── app/
+    │   ├── app.R        ← found
+    │   └── R/           ← loaded automatically, as on your computer
+    ├── data/
+    └── config.yml
+    ```
+
+    That's found as `app/app.R` and run from inside `app/`, exactly as
+    `runApp("app")` runs it, so paths like `"../config.yml"` keep working.
+    Nothing is added to your folder: the published copy gets a one-line
+    `app.R` at the top that starts the real one.
+
+    A top-level app always wins: the subfolders are only searched when the top
+    of the folder has none. These are never treated as apps: `R/`, `renv/`,
+    `inst/`, `tests/`, `testthat/`, `www/`, your data folder, `rsconnect/`
+    and `packrat/`. Deeper than one folder down, name the file yourself: in
+    the application with **Choose another file…** on tab 1, or on the command line
+    with `ENTRY_FILE=src/dashboard/app.R`. A file in a subfolder must end with
+    its own `shinyApp(...)` call.
+
     A [golem](https://engineering-shiny.org/) package ships its app at
-    `inst/app.R`, which won't be found. Add this as `app.R` in the project
-    root:
+    `inst/app.R`, which isn't searched, because it needs the package loaded
+    first. Add this as `app.R` in the project root:
 
     ```r
     # app.R — shim so the deployment tooling can find this golem app
@@ -152,6 +172,11 @@ file at the top level that hands off to the real one:
     `inst/app.R` and no root-level entry point, so you'll know if it applies.
 
 === "Python"
+
+    At the top of your project folder. Not in `src/` or `app/`: the Python
+    servers start in the project folder and import the main file from there.
+    If your project keeps its app in a subfolder, add a **shim**, a tiny file
+    at the top that hands off to the real one:
 
     ```python
     # app.py — shim so the deployment tooling can find the real app
