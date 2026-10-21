@@ -168,8 +168,9 @@ Every attempt leaves a full log in `~/dashboard-deploy-logs/`.
     2. Publish again
 
     If it happens repeatedly, the instance's root disk is too small for your
-    project — R geospatial images are 8 GB or more before the build cache. Ask
-    for a bigger root disk when creating the instance, or resize.
+    project — R geospatial images are 8 GB or more before the build cache, and
+    each R version a project uses brings its own. Ask for a bigger root disk
+    when creating the instance, or resize.
 
 ??? failure "`fatal error: <something>.h: No such file or directory`"
 
@@ -217,10 +218,10 @@ Every attempt leaves a full log in `~/dashboard-deploy-logs/`.
 
 ??? failure "It hangs for a long time with no output"
 
-    Usually normal. R package compilation produces long silences, and a
-    geospatial build can sit apparently idle for many minutes.
+    Usually normal. Downloading a base image of several GB, or compiling an R
+    package that doesn't come ready-built, produces long silences.
 
-    Genuine hangs are rare. Give it 20 minutes past the last output before
+    Genuine hangs are rare. Give it 10 minutes past the last output before
     concluding anything, then press **Stop** and read the log.
 
 ??? failure "apt errors, connection timeouts, `Connection failed`"

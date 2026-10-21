@@ -116,10 +116,10 @@ Be realistic about the first time through:
 | Part 1 — server and volume | 20 minutes |
 | Part 2 — preparing your project | 30 minutes for a simple app; an afternoon for an old or complicated one |
 | Part 3 — publishing | 15 minutes of clicking, plus the build |
-| **The build itself** | Streamlit/Dash/Python Shiny: **5–15 minutes**. R Shiny: **20–45 minutes** the first time, and longer for geospatial projects |
+| **The build itself** | Usually **2–15 minutes** the first time, for any framework; geospatial R projects are at the top of that range |
 
-Subsequent publishes of the same project are much faster, because the slow
-parts are cached.
+Publishing the same project again after a code change takes under a minute,
+because the slow parts are cached.
 
 ---
 

@@ -48,7 +48,7 @@ copy it.
     Open the web desktop, click the **Deploy My Dashboard** icon, and work
     through its four tabs. Then check on it, read its logs, and update it.
 
-    *15 minutes of clicking; the build itself takes 5–40 minutes.*
+    *15 minutes of clicking; the build itself takes a few minutes.*
 
 -   :material-lifebuoy: **[Help](help/troubleshooting.md)**
 

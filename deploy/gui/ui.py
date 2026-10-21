@@ -1217,8 +1217,8 @@ class DeployTab(ttk.Frame):
         elif info.expect_slow_build:
             lines.append(
                 "\nThis project has no renv.lock, so its R packages will be "
-                "worked out and recorded first. Expect this to take a while — "
-                "often 20 minutes or more. It only happens once.")
+                "worked out and recorded first, which roughly doubles the "
+                "first build. It only happens once.")
         mounting = self.shared.data_mode == "mount"
         if not mounting:
             lines.append(f"\nData: published with the app "

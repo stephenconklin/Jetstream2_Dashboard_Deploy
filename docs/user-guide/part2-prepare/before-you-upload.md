@@ -1,6 +1,6 @@
 # Final checks before you upload
 
-<p class="meta-line">10 minutes. Each of these takes seconds and each one saves you a 20-minute build.</p>
+<p class="meta-line">10 minutes. Each of these takes seconds and each one saves you a wasted build.</p>
 
 ---
 
@@ -95,6 +95,7 @@ Framework:       r-shiny
 Entry point:     water_quality.R
                  (not named app.R — the build adds an app.R that runs it)
 Base image:      rocker/geospatial:4.4.1
+                 (R 4.4.1, the version this project's renv.lock was made with)
 Dependencies:    renv.lock present
 App folder:      48 MB would be published with the app
 data/ folder:    not in the project (set DATA_DIR=/path to mount data from elsewhere)
@@ -108,6 +109,7 @@ Read it as five questions:
 |---|---|
 | **Framework** | Is it the one you expect? If not, detection found the wrong signal. |
 | **Entry point** | Is that really your app's starting file? If several files could be, it says so; name the right one with `ENTRY_FILE=…` |
+| **Base image** | The R or Python version it will be built on, and why. Taken from your `renv.lock` or Python version file when you have one |
 | **Dependencies** | `missing` means the build will stop. Fix it now. |
 | **App folder** | Under about a gigabyte? That's what gets published with the app |
 | **Code check** | Anything listed is worth fixing before you upload: a path on your own computer, a `setwd()`, a file name whose capitals don't match |

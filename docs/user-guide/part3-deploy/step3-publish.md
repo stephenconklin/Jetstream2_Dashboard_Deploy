@@ -1,6 +1,6 @@
 # Step 3 · Publish
 
-<p class="meta-line">One click, then 5–45 minutes of waiting you don't have to watch. Tab 3 of the application.</p>
+<p class="meta-line">One click, then a few minutes of waiting you don't have to watch. Tab 3 of the application.</p>
 
 This tab shows you what's about to happen, then does it.
 
@@ -42,7 +42,7 @@ The summary may also warn you about one of these:
     you use, install them once to record the exact versions, then install them
     again from that record.
 
-    **It roughly doubles the first build time** — often 20 minutes or more
+    **It roughly doubles the first build time**, usually a few minutes
     extra. It only happens once; after this your project has a `renv.lock` and
     subsequent builds are normal speed.
 
@@ -176,15 +176,26 @@ buttons.
 
 ### How long to expect
 
-| Framework | First build | Later builds |
+| Framework | First build | Publishing again after a code change |
 |---|---|---|
-| Streamlit, Dash, Python Shiny | 5–15 min | 1–3 min |
-| R Shiny (with `renv.lock`) | 20–45 min | 2–5 min |
-| R Shiny (no `renv.lock`) | 40–90 min | 2–5 min |
-| R Shiny, geospatial | 45–90 min | 3–8 min |
+| Streamlit, Dash, Python Shiny | 2–10 min | under a minute |
+| R Shiny (with `renv.lock`) | 2–10 min | under a minute |
+| R Shiny (no `renv.lock`) | about twice that | under a minute |
+| R Shiny, geospatial | 3–15 min | under a minute |
 
-Later builds are much faster because the slow parts — the base image, the
-system libraries, the packages — are cached and reused.
+Publishing again is fast because the slow parts — the base image, the system
+libraries, the packages — are cached and reused. Only what changed is redone:
+editing your code takes seconds, while changing `renv.lock` or
+`requirements.txt` reinstalls your packages, a few minutes. For scale: a
+geospatial R dashboard with about 130 packages took 3 minutes the first time
+on a fresh instance, and 15 seconds to publish again after a code change.
+
+Two things make a first build slower. If your project uses a different R
+version from the one already on the instance (see
+[Base image](#advanced-options)), its base image is downloaded first: several
+GB, a few minutes. And R packages normally arrive ready-built, but one that
+isn't available that way — from GitHub or Bioconductor, say — is compiled,
+which can take a while for a big one.
 
 ### You don't have to watch
 
@@ -199,8 +210,8 @@ a log file the window merely displays. So you can:
 …and the build carries on. Reopen the application later and it reattaches to
 the running build and resumes showing you the log.
 
-This is deliberate: a 40-minute R build that died because a laptop lid closed
-would be unacceptable.
+This is deliberate: a long build that died because a laptop lid closed would
+be unacceptable.
 
 ??? tip "What the log is telling you"
 
@@ -209,12 +220,14 @@ would be unacceptable.
 
     1. **Preparing the build context** — copying your code (skipping `.git`,
        `data/`, virtual environments)
-    2. **Pulling the base image** — instant on the prepared image, which
-       pre-downloads all of them
+    2. **Pulling the base image** — instant when it's already on the
+       instance (the prepared image pre-downloads R 4.4.1 and Python 3.11); a
+       few minutes for a project on a different R or Python version
     3. **Installing system libraries** — apt output; anything from your
        `apt.txt` happens here
-    4. **Installing your packages** — the long part. R compiles from source;
-       Python usually downloads prebuilt wheels
+    4. **Installing your packages** — the long part. R packages arrive
+       ready-built from Posit Package Manager, and Python's as prebuilt
+       wheels; only a package without one is compiled
     5. **Starting the container**
     6. **Checking it answers** — polling your app until it responds
 

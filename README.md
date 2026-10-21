@@ -142,6 +142,7 @@ deploy/
 ├── lib/
 │   ├── common.sh            #   shared build/run/retry/smoke-test/data-dir logic
 │   ├── detect_framework.sh  #   framework and main-file detection
+│   ├── base_image.sh        #   which R or Python to build on, from the project's own files
 │   ├── check_code.sh        #   advisory check for laptop-only habits in the code
 │   ├── proxy.sh             #   where the container binds, and how it's health-checked
 │   ├── disk.sh              #   free space, and reclaiming it

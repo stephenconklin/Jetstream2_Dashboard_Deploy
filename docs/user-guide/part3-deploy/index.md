@@ -1,6 +1,6 @@
 # Part 3 · Publish it
 
-<p class="meta-line">15 minutes of clicking, plus 5–45 minutes of build time you don't have to watch.</p>
+<p class="meta-line">15 minutes of clicking, plus a few minutes of build time you don't have to watch.</p>
 
 Everything from here happens in the **Deploy My Dashboard** application on your
 instance's desktop. It has four tabs, and they're numbered because they're

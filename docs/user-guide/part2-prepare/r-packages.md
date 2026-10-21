@@ -20,12 +20,13 @@ installs what it finds, and records the result.
 |---|---|---|
 | Which versions get installed | Whatever is newest on CRAN today | The versions you tested with |
 | Which R it's built on | R 4.4.1 | The R you made the lockfile with |
-| First build time | Roughly **doubled** — packages are installed once to work out the list, then again to install from it | Normal |
+| First build time | Roughly **doubled** — packages are installed once to work out the list, then again to install from it | Normal, usually a few minutes |
 | Rebuild next year | May differ from today's, or fail | Identical |
 | Packages loaded dynamically | Missed — the scan only sees literal `library(x)` calls | Included |
 
-The build-time row is the one people feel. An R geospatial build that takes 45
-minutes with a lockfile can take an hour and a half without one.
+The R version row matters as much as the build time. A lockfile made with
+R 4.5 can pin packages that won't install on R 4.4 at all; with a lockfile,
+the server builds on the same R you used.
 
 !!! danger "The version-drift trap"
 
@@ -85,7 +86,7 @@ shiny::runApp()
 
 This now runs against renv's private library rather than your system one, so
 this is a genuine test: if a package was being loaded from somewhere renv
-didn't find, you'll discover it here rather than 40 minutes into a build on the
+didn't find, you'll discover it here rather than partway into a build on the
 server.
 
 If something's missing, install it into the project and re-snapshot:
@@ -147,7 +148,8 @@ my-dashboard/
 
     Two consequences:
 
-    - **Builds are slower and larger.** Budget 45+ minutes for the first one.
+    - **Builds are larger.** The geospatial base image is about 7 GB, so a
+      first build that has to download it takes a few minutes longer.
     - **A lockfile matters more here than anywhere else.** Geospatial packages
       are the ones whose CRAN-latest versions most often demand newer system
       libraries than the image provides. If your build fails compiling `sf` or
