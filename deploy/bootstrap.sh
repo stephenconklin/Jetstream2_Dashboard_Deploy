@@ -159,6 +159,11 @@ if [[ "$MODE" == "check" ]]; then
   for c in docker nginx; do
     if command -v "$c" >/dev/null 2>&1; then ok "$c installed"; else warn "$c NOT installed"; fi
   done
+  if docker buildx version >/dev/null 2>&1; then
+    ok "BuildKit installed (buildx $(docker buildx version | awk '{print $2}'))"
+  elif command -v docker >/dev/null 2>&1; then
+    warn "BuildKit NOT installed — builds use the slow legacy builder; re-run bootstrap.sh"
+  fi
   command -v systemctl >/dev/null 2>&1 && \
     echo "    ---  nginx service: $(systemctl is-active nginx 2>/dev/null || echo inactive)"
   echo "    ---  swap: $(swapon --show=SIZE --noheadings 2>/dev/null | tr '\n' ' ' || echo none)"
@@ -255,6 +260,39 @@ if [[ "$REAL_USER" != "root" ]] && ! id -nG "$REAL_USER" | grep -qw docker; then
   warn "added '$REAL_USER' to the docker group — they must log out and back in for it to apply"
 fi
 ok "docker $(docker --version | awk '{print $3}' | tr -d ,)"
+
+# ---------------------------------------------------------------------------
+# BuildKit, checked separately from Docker itself because it's the half that
+# goes missing: Jetstream2's images ship Ubuntu's docker.io, so the step above
+# skips, and docker.io leaves buildx out. Without it `docker build` falls back
+# to the deprecated legacy builder, which on Docker 29's containerd image
+# store re-processes the whole base image on every Dockerfile step — about
+# 75 s each even for EXPOSE, so a republish where every step is cached still
+# takes 7 minutes, and an R build twice as long as it should. The plugin has
+# to come from the same family as the engine: Docker's own packages pair with
+# docker-buildx-plugin, Ubuntu's with docker-buildx, and mixing the two
+# conflicts. Not fatal when it can't be added: builds work, just slowly.
+step "BuildKit"
+if docker buildx version >/dev/null 2>&1; then
+  skip "buildx $(docker buildx version | awk '{print $2}')"
+else
+  buildx_pkg=""
+  if dpkg -s docker-ce >/dev/null 2>&1; then
+    buildx_pkg="docker-buildx-plugin"
+  elif dpkg -s docker.io >/dev/null 2>&1; then
+    buildx_pkg="docker-buildx"
+  fi
+  if [[ -n "$buildx_pkg" ]] && apt-get install -y -qq "$buildx_pkg" >/dev/null \
+     && docker buildx version >/dev/null 2>&1; then
+    ok "installed $buildx_pkg (buildx $(docker buildx version | awk '{print $2}'))"
+  else
+    buildx_why="couldn't tell how Docker was installed"
+    [[ -n "$buildx_pkg" ]] && buildx_why="$buildx_pkg didn't install"
+    warn "BuildKit not added ($buildx_why). Builds still work, but slowly.
+         Install the buildx plugin that matches how Docker was installed here,
+         then check with: docker buildx version"
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 step "Swapfile (${SWAP_SIZE})"

@@ -12,7 +12,7 @@ The app is reachable on port 80 at the instance's fixed IP. On an instance provi
 - A fixed/floating IP assigned to the instance.
 - Security group allowing inbound **80/tcp** and **22/tcp** — plus **443/tcp** if you plan to use TLS.
 - SSH access as a sudo-capable user (Jetstream2's default `exouser`).
-- Docker preinstalled (Jetstream2's standard Ubuntu image ships with it); `bootstrap.sh` installs it if not. Deploying an app needs no `sudo`, assuming `exouser` is in the `docker` group, which is Jetstream2's default — only host provisioning does.
+- Docker preinstalled (Jetstream2's standard Ubuntu image ships with it); `bootstrap.sh` installs it if not. Either way, `bootstrap.sh` adds **BuildKit** (`docker buildx`) when it's missing, which Jetstream2's image leaves out: it installs Ubuntu's `docker-buildx` alongside Ubuntu's `docker.io`, or `docker-buildx-plugin` alongside Docker's own `docker-ce`, since the two families conflict. Without BuildKit, builds fall back to Docker's deprecated legacy builder, which on Docker 29's containerd image store spends about 75 seconds on every Dockerfile step, cached or not — a fully cached republish takes about 7 minutes. `bootstrap.sh --check` reports whether it's installed. Deploying an app needs no `sudo`, assuming `exouser` is in the `docker` group, which is Jetstream2's default — only host provisioning does.
 
 ---
 

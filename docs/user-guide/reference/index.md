@@ -64,7 +64,7 @@ That split is the organising principle of the whole repository — bootstrap
 knows nothing about frameworks, and `build_and_run.sh` never needs root.
 
 ```bash
-sudo ./deploy/bootstrap.sh          # once per instance: Docker, nginx, swap, TLS, watchdog
+sudo ./deploy/bootstrap.sh          # once per instance: Docker + BuildKit, nginx, swap, TLS, watchdog
 ./deploy/build_and_run.sh <project> # every time your code changes
 ./deploy/manage.sh health           # which layer is broken
 ```
