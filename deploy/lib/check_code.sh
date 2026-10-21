@@ -87,12 +87,22 @@ DATA_FILE_RE='["'"'"'][^"'"'"'<>|*?]+\.(csv|tsv|txt|xlsx|xlsm|xls|shp|gpkg|geojs
 # once per check rather than once per name. Code commonly builds a path in
 # pieces — file.path(DATA, "area", "area.geojson") — so a quoted name can
 # live in any subfolder, not only where it's written.
+#
+# A data folder mounted from DATA_DIR is listed too, under the name the app
+# sees it by (DATA_SUBDIR): it isn't in the project, but at run time it's
+# exactly where the code will find it.
 list_project_paths() {
   find "$PROJECT_DIR" \
     \( -name .git -o -name renv -o -name node_modules -o -name .venv -o -name venv \
        -o -name __pycache__ -o -name .Rproj.user -o -name rsconnect \) -prune \
     -o -print 2>/dev/null | head -n 200000 \
     | awk -v p="$PROJECT_DIR/" 'index($0, p) == 1 { print substr($0, length(p) + 1) }' || true
+  if [[ -n "${DATA_DIR:-}" && -d "$DATA_DIR" ]]; then
+    local mounted="${DATA_DIR%/}"
+    find "$mounted" -print 2>/dev/null | head -n 200000 \
+      | awk -v p="$mounted" -v as="${DATA_SUBDIR:-data}" \
+          'index($0, p) == 1 { print as substr($0, length(p) + 1) }' || true
+  fi
 }
 
 # Where a quoted file name will be looked for, and whether it's there.
@@ -264,7 +274,10 @@ check_project_code() {
         state="$(resolve_project_file "$expected" "$name")"
         case "$state" in
           ok) ;;
-          missing)
+          # A piece of a path, in a project whose data isn't attached yet
+          # (no data folder of its own, no DATA_DIR): it's most likely in
+          # the data still to come, so there's nothing to check it against.
+          missing) [[ "$kind" == "piece" && "$has_data_dir" -eq 0 && -z "${DATA_DIR:-}" ]] && continue
             add_code_note "$rel:$line: reads \"$name\", which isn't in ${where_app}. If it's a data file, add it to the folder (or your data folder in step 2)." ;;
           elsewhere:*)
             add_code_note "$rel:$line: reads \"$name\", which isn't in ${where_app}, but there's one at \"${state#elsewhere:}\" in your project. If that's the one, write \"$(path_from_app_base "$app_base" "${state#elsewhere:}")\" instead." ;;
