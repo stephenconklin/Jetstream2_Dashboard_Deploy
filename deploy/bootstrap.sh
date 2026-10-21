@@ -632,7 +632,20 @@ cat <<EOF
 
 EOF
 
-if [[ "$DEPLOYED" -eq 0 ]]; then
+# DEPLOYED only says whether this run published one. A re-run on an instance
+# that's already serving a dashboard said "No dashboard is published yet",
+# which reads as if the re-run had taken it down. Docker's publish filter
+# matches the host port, which is where the app sits behind nginx.
+if [[ "$DEPLOYED" -eq 0 ]] \
+   && [[ -n "$(docker ps -q --filter "publish=$APP_HOST_PORT" 2>/dev/null)" ]]; then
+  cat <<EOF
+    A dashboard is already published and still serving. To publish a new
+    version, use "Deploy My Dashboard" on the desktop, or as $REAL_USER:
+
+      ./deploy/build_and_run.sh /path/to/your/project
+
+EOF
+elif [[ "$DEPLOYED" -eq 0 ]]; then
   cat <<EOF
     No dashboard is published yet. Either open "Deploy My Dashboard" on the
     desktop, or publish from a terminal as $REAL_USER:

@@ -19,11 +19,18 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/proxy.sh"
 # failed cp — leaked a full copy of the project into /tmp. An EXIT trap
 # covers returns, exits, and Ctrl-C alike.
 BUILD_CTX=""
+# The copy of the build output kept for summarize_build_failure(). Global for
+# the same reason as BUILD_CTX: as a local, a build stopped from the GUI (a
+# SIGTERM mid-build) left it behind in /tmp every time — up to megabytes for
+# an R build.
+BUILD_LOG=""
 cleanup_build_ctx() {
   if [[ -n "${BUILD_CTX:-}" && -d "${BUILD_CTX:-}" ]]; then
     rm -rf "$BUILD_CTX"
   fi
   BUILD_CTX=""
+  [[ -n "${BUILD_LOG:-}" ]] && rm -f "$BUILD_LOG"
+  BUILD_LOG=""
   cleanup_preflight_containers
 }
 
@@ -557,8 +564,8 @@ DOCKERIGNORE
   local platform_args=()
   [[ -n "${BUILD_PLATFORM:-}" ]] && platform_args=(--platform "$BUILD_PLATFORM")
 
-  local build_log
-  build_log="$(mktemp)"
+  BUILD_LOG="$(mktemp)"
+  local build_log="$BUILD_LOG"
 
   local build_tries=3 attempt build_ok=0
   for attempt in $(seq 1 "$build_tries"); do

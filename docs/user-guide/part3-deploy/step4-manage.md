@@ -166,17 +166,18 @@ rather than as "the disk is full".
 When free space gets tight the panel says so explicitly, rather than leaving you
 to judge whether a number is worrying.
 
-**Free up space** removes leftover pieces of previous builds and the build
-cache. It is deliberately conservative:
+**Free up space** removes leftover pieces of previous builds and build cache
+nothing uses any more. It is deliberately conservative:
 
 | Removed | Kept |
 |---|---|
 | Untagged leftover layers from previous builds | Your dashboard's current image |
-| Docker's build cache | Your stopped dashboard container, if you stopped it |
+| Unused build cache, from cancelled or replaced builds | Your stopped dashboard container, if you stopped it |
+| | The build cache your current dashboard uses, so publishing it again stays quick |
 | | The auto-restart watchdog |
 
-Your running dashboard is unaffected. The only cost is that your next publish
-is slower, because the cached pieces have to be rebuilt.
+Your running dashboard is unaffected, and publishing it again stays as quick as
+before.
 
 It can take a few minutes on a large cache. The button greys out while it works.
 

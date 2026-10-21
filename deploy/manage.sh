@@ -454,9 +454,13 @@ cmd_cleanup() {
     echo "Cleanup finished. Now $(disk_root_summary)."
   fi
   echo
-  echo "Removed leftover build layers and the build cache. Your dashboard's own"
-  echo "image was not touched, so it is still running and can still be restarted."
-  echo "The next publish will be slower, because the build cache has to be rebuilt."
+  # `builder prune -f` without --all removes only cache nothing refers to any
+  # more (cancelled and superseded builds), so the steps a republish of the
+  # current dashboard reuses survive it — with BuildKit, the difference
+  # between a 10-second republish and a full rebuild.
+  echo "Removed leftover build layers and unused build cache. Your dashboard's own"
+  echo "image was not touched, so it is still running and can still be restarted,"
+  echo "and the cache that makes publishing it again quick was kept."
 }
 
 # ---------------------------------------------------------------------------
