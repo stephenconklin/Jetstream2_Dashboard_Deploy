@@ -157,7 +157,7 @@ on a server, a box appears listing each case with its file and line number:
 | calls `install.packages()` | Publishing installs your packages. Doing it again on every start is slow and can fail |
 | calls `runApp()` | The server starts your app itself. A second `runApp()` stops it from ever finishing starting up |
 | reads `"stations.csv"`, but the file is called `"Stations.csv"` | Mac and Windows ignore capital letters in file names. The server doesn't |
-| reads a file that isn't in your app folder | It won't be on the server either, unless it's in your data folder (step 2) |
+| reads a file that isn't in your app folder | It won't be on the server either, unless it's in your data folder (step 2). If the note says there's one elsewhere in your project, write the path it suggests |
 
 These are **advice, not errors**. They never stop you publishing, and an
 occasional one may not apply (a line in a data-preparation script the
