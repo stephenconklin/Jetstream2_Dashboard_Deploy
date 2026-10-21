@@ -384,6 +384,26 @@ over quota, a volume won't attach — the Jetstream2 team are the right people:
 
 Common ones are covered in [Part 1](../part1-instance/create-instance.md#common-problems).
 
+??? failure "The web desktop won't connect, though the instance is running"
+
+    The Web Desktop link opens but never shows the desktop, or connects and
+    drops a few seconds later. Your dashboard may be working fine meanwhile.
+
+    The likely cause is internet bots. The desktop's VNC port can be left open
+    to the internet, and bots scanning for it fill all of its connection
+    slots, so the web desktop can't get one. **Rebooting isn't needed.** Over
+    SSH, as `exouser`, from the tooling folder:
+
+    ```bash
+    sudo ./deploy/bootstrap.sh          # closes the VNC ports to the internet, for good
+    sudo ss -K -tn state established '( sport = :5901 )'   # drops the bots' connections
+    ```
+
+    Then reload the web desktop. The first command keeps the ports closed
+    across reboots too; `sudo ./deploy/bootstrap.sh --check` confirms it. To
+    see whether this was the cause, look for `Limit of 100 connections
+    reached` in `~/.vnc/*.log`.
+
 ---
 
 ## Asking for help

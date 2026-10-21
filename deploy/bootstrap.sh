@@ -119,6 +119,7 @@ PROXY_TIMEOUT="3600s"
 SWAP_SIZE="2G"
 ENABLE_AUTOHEAL="yes"
 ENABLE_UFW="no"
+PROTECT_VNC="yes"
 
 ENV_FILE="$SCRIPT_DIR/deploy.env"
 if [[ -f "$ENV_FILE" ]]; then
@@ -148,6 +149,8 @@ if [[ -n "$SERVER_NAME" && "$ENABLE_TLS" == "yes" ]]; then
 fi
 
 PROXY_STATE_FILE="$PROXY_ENV_FILE"
+VNC_FIREWALL_BIN="/usr/local/libexec/dashboard-deploy-vnc-firewall.sh"
+VNC_FIREWALL_UNIT="dashboard-deploy-vnc-firewall.service"
 NGINX_SITE="/etc/nginx/sites-available/dashboard"
 MAINTENANCE_ROOT="/var/www/dashboard-deploy"
 
@@ -166,6 +169,11 @@ if [[ "$MODE" == "check" ]]; then
   fi
   command -v systemctl >/dev/null 2>&1 && \
     echo "    ---  nginx service: $(systemctl is-active nginx 2>/dev/null || echo inactive)"
+  if [[ -x "$VNC_FIREWALL_BIN" && "$("$VNC_FIREWALL_BIN" status 2>/dev/null)" == "active" ]]; then
+    ok "desktop VNC ports closed to the internet (only this host and Docker)"
+  elif ss -tln 2>/dev/null | grep -qE '0\.0\.0\.0:59(0[0-9]|10) '; then
+    warn "a VNC port is listening on every address with nothing restricting it — re-run bootstrap.sh"
+  fi
   echo "    ---  swap: $(swapon --show=SIZE --noheadings 2>/dev/null | tr '\n' ' ' || echo none)"
   echo "    ---  root disk: $(df -h / | awk 'NR==2{print $5" used, "$4" free"}')"
 
@@ -566,6 +574,11 @@ fi
 # Firewall
 # ---------------------------------------------------------------------------
 step "Firewall"
+# Not "Jetstream2's security groups already filter this": Exosphere's desktop
+# instances were found with the VNC port open to the internet (see the next
+# step), so the security group can't be assumed to cover everything. ufw
+# stays opt-in because a mistake in it locks you out of a remote instance;
+# the known exposure is closed by the step below either way.
 if [[ "$ENABLE_UFW" == "yes" ]]; then
   apt-get install -y -qq ufw >/dev/null
   ufw allow OpenSSH >/dev/null
@@ -578,7 +591,51 @@ if [[ "$ENABLE_UFW" == "yes" ]]; then
     warn "CONFIRM SSH ACCESS FROM A SECOND TERMINAL before closing this one."
   fi
 else
-  skip "disabled (Jetstream2 security groups already filter inbound traffic)"
+  skip "disabled in deploy.env (opt-in; the desktop's VNC ports are closed below regardless)"
+fi
+
+# ---------------------------------------------------------------------------
+# Desktop VNC ports. Exosphere's desktop instances run TurboVNC listening on
+# every address (0.0.0.0:5901) for Guacamole, and their security group can
+# leave that open: on the test instance, internet bots held all 100 of
+# TurboVNC's connection slots for a week, so the Guacamole desktop simply
+# stopped connecting — and every one of them was trying the VNC password.
+# Guacamole connects from inside the host (Docker's bridge), so the ports are
+# closed to everything else, by rules a boot-time unit re-applies: iptables
+# rules alone vanish on reboot. Before network-pre.target, so there's no
+# window at boot; after ufw, which would otherwise rebuild INPUT around them.
+# Harmless on an instance with no VNC at all.
+# ---------------------------------------------------------------------------
+step "Desktop VNC ports"
+if [[ "$PROTECT_VNC" != "yes" ]]; then
+  skip "disabled in deploy.env"
+else
+  install -D -m 0755 -o root -g root "$SCRIPT_DIR/lib/vnc_firewall.sh" "$VNC_FIREWALL_BIN"
+  cat > "/etc/systemd/system/$VNC_FIREWALL_UNIT" <<UNIT
+[Unit]
+Description=Keep desktop VNC ports reachable only from this host and Docker (Jetstream2 Dashboard Deploy)
+DefaultDependencies=no
+After=local-fs.target ufw.service
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=$VNC_FIREWALL_BIN apply
+ExecStop=$VNC_FIREWALL_BIN remove
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  systemctl daemon-reload
+  systemctl enable "$VNC_FIREWALL_UNIT" >/dev/null 2>&1 || true
+  # restart, not start: a re-run picks up a changed script.
+  if systemctl restart "$VNC_FIREWALL_UNIT" && [[ "$("$VNC_FIREWALL_BIN" status)" == "active" ]]; then
+    ok "VNC ports 5900-5910 reachable only from this host and Docker (re-applied at every boot)"
+  else
+    warn "couldn't apply the VNC port rules — see: systemctl status $VNC_FIREWALL_UNIT"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
