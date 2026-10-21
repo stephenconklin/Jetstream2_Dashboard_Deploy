@@ -16,10 +16,8 @@ deploy/app/*
 # VS Code Project File
 Jetstream2_Dashboard_Deploy.code-workspace
 
-# Real-world projects cloned into examples/ for testing. Unlike the
-# *-hello-world fixtures, these are separate upstream repos (with their own
-# .git/ and license) and shouldn't be nested into this one.
-examples/WORKSHOP-interactive-shiny-dashboards/
+#Test Dashboard Code and Data Files
+_Working_Files/*
 
 # build_and_run.sh writes a renv.lock into whatever project it deploys.
 # The bundled R example deliberately ships WITHOUT one so that smoke-testing
