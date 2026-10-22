@@ -110,13 +110,35 @@ app_direct_url() {
   echo "http://127.0.0.1:${APP_HOST_PORT}/"
 }
 
+# Whether nginx is serving HTTPS under a domain name, per the state file
+# bootstrap.sh writes (PUBLIC_SCHEME=https only once a certificate is in use).
+public_is_https() {
+  [[ "${PROXY_ENABLED:-0}" -eq 1 && -n "${PROXY_SERVER_NAME:-}" \
+     && "$(_proxy_env_get PUBLIC_SCHEME)" == "https" ]]
+}
+
 # What the public actually reaches: nginx when it is in front, otherwise the
-# container's own published port.
+# container's own published port. Under HTTPS, port 80 only redirects, so the
+# real public path is https://<name>/ — probed on this machine with the curl
+# options public_curl_args() gives, which also checks the certificate itself,
+# so an expired or wrong one shows up as the failure it is.
 public_local_url() {
-  if [[ "${PROXY_ENABLED:-0}" -eq 1 ]]; then
+  if public_is_https; then
+    echo "https://${PROXY_SERVER_NAME}/"
+  elif [[ "${PROXY_ENABLED:-0}" -eq 1 ]]; then
     echo "http://127.0.0.1/"
   else
     echo "http://127.0.0.1:${APP_HOST_PORT}/"
+  fi
+}
+
+# Extra curl arguments for probing public_local_url(), one per line: under
+# HTTPS, resolve the name to this machine, so the probe tests this server
+# rather than wherever DNS points from here (and works before DNS has
+# propagated). Nothing otherwise.
+public_curl_args() {
+  if public_is_https; then
+    printf '%s\n' --resolve "${PROXY_SERVER_NAME}:443:127.0.0.1"
   fi
 }
 

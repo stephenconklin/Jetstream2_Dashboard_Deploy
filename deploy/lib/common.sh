@@ -12,6 +12,8 @@
 # build_and_run.sh and manage.sh cannot drift on the answer.
 # shellcheck source-path=SCRIPTDIR
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/proxy.sh"
+# For lookup_public_ip(), shared with bootstrap.sh's domain check.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/domain.sh"
 
 # Temp build context created by build_image(), tracked globally so it gets
 # cleaned up however the script ends. A RETURN trap (the previous approach)
@@ -784,23 +786,14 @@ run_container() {
     "$IMAGE_NAME:latest" >/dev/null
 }
 
-# Best-effort public IP lookup for the final "reachable at" message. Not a
-# Jetstream2/OpenStack metadata call — a floating/public IP is NAT'd onto
-# the instance, so the instance's own metadata service (unlike e.g. AWS's
-# public-ipv4 key) has no way to know it. Asking an external "what's my IP"
-# service is the reliable, provider-agnostic way to get it instead. Tries
-# two such services with a short timeout each, in case one is down; falls
-# back to the old placeholder rather than failing the whole script over a
-# cosmetic message if both are unreachable (e.g. no outbound internet).
+# Best-effort public IP for the final "reachable at" message — see
+# lookup_public_ip() in domain.sh for how it's found. Falls back to a
+# placeholder rather than failing the whole script over a cosmetic message
+# when there's no outbound internet.
 public_ip() {
   local ip
-  ip="$(curl -fsS --max-time 3 https://api.ipify.org 2>/dev/null)" || \
-    ip="$(curl -fsS --max-time 3 https://ifconfig.me 2>/dev/null)" || true
-  if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "$ip"
-  else
-    echo "<instance-fixed-ip>"
-  fi
+  ip="$(lookup_public_ip)"
+  echo "${ip:-<instance-fixed-ip>}"
 }
 
 # The address to hand someone. Prefers the configured DNS name over the IP:
@@ -915,10 +908,15 @@ run_smoke_test() {
       # separately so the two failures can be told apart, and warn rather
       # than fail: the deployment itself did succeed.
       if [[ "$PROXY_ENABLED" -eq 1 ]]; then
-        if ! curl -fsS -o /dev/null --max-time 10 "$(public_local_url)" 2>/dev/null; then
+        local -a public_args=()
+        # A read loop, not mapfile: macOS's bash 3.2 has no mapfile.
+        local public_arg
+        while IFS= read -r public_arg; do public_args+=("$public_arg"); done < <(public_curl_args)
+        if ! curl -fsS -o /dev/null --max-time 10 "${public_args[@]+"${public_args[@]}"}" \
+               "$(public_local_url)" 2>/dev/null; then
           echo >&2
           echo "Warning: the app is answering on $app_url, but the nginx proxy in front" >&2
-          echo "of it is not serving it on port 80 — so it isn't reachable from a browser." >&2
+          echo "of it is not serving it at $(public_local_url) — so it isn't reachable from a browser." >&2
           echo "Check the proxy with:" >&2
           echo "  sudo nginx -t && sudo systemctl status nginx" >&2
           echo "  sudo tail -20 /var/log/nginx/dashboard.error.log" >&2

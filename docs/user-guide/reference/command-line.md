@@ -87,6 +87,9 @@ tmux new -s build
 | **Show latest** log | `./deploy/manage.sh logs [N]` |
 | **Storage** panel | `./deploy/manage.sh disk` |
 | **Free up space** | `./deploy/manage.sh cleanup` |
+| **Web address** · **Check** | `./deploy/lib/domain.sh <name>` (read-only) |
+| **Use this name with HTTPS** | `sudo ./deploy/bootstrap.sh --set-domain <name>` |
+| **Stop using this name** | `sudo ./deploy/bootstrap.sh --clear-domain` |
 | **Save a report to send for help** | `./deploy/manage.sh report` |
 | **Publish again** | re-run `build_and_run.sh` |
 
@@ -116,19 +119,21 @@ docker exec -it dashboard-app bash       # a shell inside the container
 
 ## Host provisioning
 
-Not exposed in the application at all — it's a one-time setup that the prepared
-image has already done.
+A one-time setup that the prepared image has already done. The application
+uses it for one thing: the Manage tab's Web address buttons run
+`--set-domain` and `--clear-domain`.
 
 ```bash
 sudo ./deploy/bootstrap.sh              # provision; safe to re-run
 sudo ./deploy/bootstrap.sh <project>    # provision, then deploy
 sudo ./deploy/bootstrap.sh --check      # read-only status snapshot
 sudo ./deploy/bootstrap.sh --remove-proxy   # roll back to direct port 80
+sudo ./deploy/bootstrap.sh --set-domain <name> [--email <addr>]   # HTTPS under a name
+sudo ./deploy/bootstrap.sh --clear-domain    # back to http://<IP>/
 ```
 
-Re-running it is the normal way to apply a change from `deploy/deploy.env` —
-adding a domain name for TLS, for instance. Every step detects existing state
-and skips.
+Re-running it is the normal way to apply a change from `deploy/deploy.env`.
+Every step detects existing state and skips.
 
 ---
 

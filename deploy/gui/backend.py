@@ -33,6 +33,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 BUILD_AND_RUN = REPO_ROOT / "deploy" / "build_and_run.sh"
 RUN_DETACHED = REPO_ROOT / "deploy" / "gui" / "run_detached.sh"
 MANAGE = REPO_ROOT / "deploy" / "manage.sh"
+BOOTSTRAP = REPO_ROOT / "deploy" / "bootstrap.sh"
+DOMAIN_CHECK = REPO_ROOT / "deploy" / "lib" / "domain.sh"
 
 LOG_DIR = Path.home() / "dashboard-deploy-logs"
 STATE_DIR = Path.home() / ".local" / "state" / "dashboard-deploy"
@@ -751,35 +753,161 @@ def mount_is_persisted(uuid: str, mountpoint: str) -> bool | None:
     return "status=persisted" in proc.stdout
 
 
-def persist_mount(uuid: str, mountpoint: str, fstype: str) -> str:
-    """Add an /etc/fstab entry so a volume survives reboot.
+def _run_as_root(args: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+    """Run a root-only helper, asking for nothing the researcher can't give.
 
-    Escalation order — pkexec, then passwordless sudo, then give up and let
-    the caller show the command. Deliberately never collects a password in
-    a Tk entry and pipes it to `sudo -S`: that puts a credential in this
-    process's memory for no benefit over pkexec's system-owned dialog, and
-    teaches researchers to type their password into arbitrary windows.
+    Escalation order — passwordless sudo, then pkexec, then give up and let
+    the caller show the command. Passwordless sudo first because that's how
+    Jetstream2 sets up `exouser`: it works silently, while pkexec would ask
+    for a password most researchers have never set. Deliberately never
+    collects a password in a Tk entry and pipes it to `sudo -S`: that puts a
+    credential in this process's memory for no benefit over pkexec's
+    system-owned dialog, and teaches researchers to type their password into
+    arbitrary windows.
     """
+    if shutil.which("sudo") and _run(["sudo", "-n", "true"], timeout=15).returncode == 0:
+        return _run(["sudo", "-n", *args], timeout=timeout)
+    if shutil.which("pkexec"):
+        return _run(["pkexec", *args], timeout=timeout)
+    raise BackendError(
+        "This step needs administrator rights, and neither passwordless sudo "
+        "nor a password prompt is available here.\n\n"
+        "Run this in a terminal instead:\n\n"
+        f"  sudo {' '.join(args)}")
+
+
+def persist_mount(uuid: str, mountpoint: str, fstype: str) -> str:
+    """Add an /etc/fstab entry so a volume survives reboot."""
     script = _persist_mount_path()
     if not script.exists():
         raise BackendError(f"Helper script not found at {script}.")
 
     args = [str(script), uuid, mountpoint, fstype]
-
-    if shutil.which("pkexec"):
-        proc = _run(["pkexec", *args], timeout=180)
-    elif _run(["sudo", "-n", "true"], timeout=15).returncode == 0:
-        proc = _run(["sudo", "-n", *args], timeout=180)
-    else:
-        raise BackendError(
-            "This step needs administrator rights, and neither a password "
-            "prompt nor passwordless sudo is available here.\n\n"
-            "Run this in a terminal instead:\n\n"
-            f"  sudo {' '.join(args)}")
+    proc = _run_as_root(args, timeout=180)
 
     if proc.returncode != 0:
         raise BackendError("Could not make the mount permanent.",
                            proc.stderr or proc.stdout, proc.returncode)
+    return proc.stdout
+
+
+LAST_DOMAIN_FILE = STATE_DIR / "last-domain"
+
+
+def last_domain() -> str:
+    """The domain name that last passed Check, or "" — a convenience only.
+
+    So a researcher who checks a name, closes the app and comes back after
+    their DNS has propagated doesn't have to retype it. Not the server's
+    setting: that's SERVER_NAME in deploy.env, written only once HTTPS works.
+    """
+    try:
+        return LAST_DOMAIN_FILE.read_text().strip()
+    except OSError:
+        return ""
+
+
+def remember_domain(name: str) -> None:
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        LAST_DOMAIN_FILE.write_text(name.strip() + "\n")
+    except OSError:
+        pass
+
+
+def check_domain(name: str) -> dict[str, str]:
+    """Whether a domain name points at this server, from domain.sh --porcelain.
+
+    Read-only and unprivileged, so the app can check as often as it likes
+    before anything is changed. Keys: domain, domain_ok ("1"/"0"), reason
+    (an enum: ok, empty, invalid_name, is_ip, not_resolving,
+    points_elsewhere, public_ip_unknown), resolves_to, public_ip.
+    """
+    proc = _run(["bash", str(DOMAIN_CHECK), "--porcelain", name.strip()], timeout=30)
+    out: dict[str, str] = {}
+    for line in proc.stdout.splitlines():
+        key, _, value = line.strip().partition("=")
+        if key:
+            out[key] = value
+    if "reason" not in out:
+        raise BackendError("Couldn't check the domain name.",
+                           proc.stderr or proc.stdout, proc.returncode)
+    return out
+
+
+# certbot's own diagnostic lines: which name, what kind of failure, and Let's
+# Encrypt's explanation. Matched rather than taking the last N lines, because
+# what surrounds them is package-installer and progress noise.
+_CERTBOT_DETAIL_PREFIXES = ("Domain:", "Type:", "Detail:", "Hint:", "Certbot failed",
+                            "An unexpected error", "Error", "Challenge failed",
+                            "Some challenges have failed")
+
+
+def _save_bootstrap_log(proc: subprocess.CompletedProcess[str], what: str) -> Path | None:
+    """Keep a bootstrap run's full output in ~/dashboard-deploy-logs/.
+
+    The dialog shows only what matters; this is everything, for when that
+    isn't enough or someone needs to send it for help.
+    """
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        path = LOG_DIR / f"{what}-{time.strftime('%Y%m%d-%H%M%S')}.log"
+        path.write_text(f"exit status {proc.returncode}\n\n--- output ---\n{proc.stdout}"
+                        f"\n--- errors ---\n{proc.stderr}\n")
+        return path
+    except OSError:
+        return None
+
+
+def _bootstrap_failure(proc: subprocess.CompletedProcess[str], what: str) -> str:
+    """What to show when a bootstrap run fails, short enough for a dialog.
+
+    bootstrap's own explanation (its FAILED message, on stderr) first, then
+    certbot's diagnostic lines, then where the full output was saved. A plain
+    tail of the output didn't work: package-installer noise pushed the actual
+    reason off the bottom of the dialog.
+    """
+    lines = [line.strip() for line in (proc.stdout + "\n" + proc.stderr).splitlines()]
+    failed = proc.stderr.strip()
+    if "FAILED" in failed:
+        failed = failed[failed.index("FAILED"):]
+    failed = "\n".join(failed.splitlines()[:12])
+    details: list[str] = []
+    for line in lines:
+        if line.startswith(_CERTBOT_DETAIL_PREFIXES) and line not in details:
+            details.append(line)
+    parts = [failed] if failed else []
+    if details:
+        parts.append("Let's Encrypt / certbot said:\n" + "\n".join(details[:10]))
+    log = _save_bootstrap_log(proc, what)
+    if log:
+        parts.append(f"The full output is in {log}")
+    return "\n\n".join(parts) or "No explanation was printed."
+
+
+def set_domain(name: str) -> str:
+    """Serve the dashboard over HTTPS under `name` (bootstrap --set-domain).
+
+    bootstrap gets the certificate before changing any setting, so a failure
+    leaves the dashboard exactly as it was; its own message, shown verbatim,
+    says why. Restarts nginx on success (a couple of seconds). --yes because
+    there is no terminal to answer bootstrap's port-80 question, which can't
+    arise on an instance already behind nginx anyway.
+    """
+    proc = _run_as_root([str(BOOTSTRAP), "--yes", "--set-domain", name.strip()],
+                        timeout=900)
+    if proc.returncode != 0:
+        raise BackendError("HTTPS wasn't set up.", _bootstrap_failure(proc, "https-setup"),
+                           proc.returncode)
+    return proc.stdout
+
+
+def clear_domain() -> str:
+    """Go back to http://<IP>/ (bootstrap --clear-domain)."""
+    proc = _run_as_root([str(BOOTSTRAP), "--yes", "--clear-domain"], timeout=900)
+    if proc.returncode != 0:
+        raise BackendError("Couldn't stop using the domain name.",
+                           _bootstrap_failure(proc, "https-clear"), proc.returncode)
     return proc.stdout
 
 

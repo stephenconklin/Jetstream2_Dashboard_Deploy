@@ -166,6 +166,8 @@ Capture these on a real instance with a real (or demo) project published.
 | 31 | `p3-tab4-buttons.png` | Close crop of the button row |
 | 32 | `p3-tab4-details.png` | The Details panel with all eight rows populated and a `200` in **Responding** |
 | 33 | `p3-tab4-storage.png` | The Storage panel with free space, image size, reclaimable space, **Free up space**. Ideally on an instance with a few builds behind it, so the numbers are non-zero |
+| 33a | `p3-tab4-web-address.png` | The **Web address** panel after a passing **Check**: a real domain name typed in, the "points to this server" message, **Use this name with HTTPS** enabled. Needs a name pointed at the instance (DNS only, not proxied) |
+| 33b | `p3-tab4-web-address-https.png` | The same panel once HTTPS is on: "served at https://… with HTTPS", **Stop using this name** enabled |
 | 34 | `p3-tab4-logs.png` | The log pane with real R Shiny startup output |
 | 35 | `p3-tab4-report.png` | The **Report saved** dialog naming the file path |
 

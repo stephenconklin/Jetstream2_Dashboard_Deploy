@@ -71,13 +71,14 @@ upstream dashboard_app {
 }
 
 server {
-    listen 80;
+    __LISTEN__
     # Rendered as a comment by bootstrap.sh on a host with IPv6 disabled: nginx
     # refuses to start at all ("socket() [::]:80 failed") rather than skipping
     # an address family it cannot bind, which would fail the whole provision
     # over a listener most Jetstream2 instances never need.
     __LISTEN_IPV6__
     server_name __SERVER_NAME__;
+    __TLS_INCLUDE__
 
     server_tokens off;
 

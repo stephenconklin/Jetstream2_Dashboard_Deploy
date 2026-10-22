@@ -10,7 +10,8 @@ Your dashboard is live. This page covers what to do with it.
 http://<your-instance-ip>/
 ```
 
-For example `http://149.165.170.42/`. Anyone, anywhere, with a browser can open
+For example `http://149.165.170.42/`, or `https://your-name/` once you've
+given it [a domain name](#can-i-get-https). Anyone, anywhere, with a browser can open
 it. No login, no VPN, no Jetstream2 account needed.
 
 The address is **stable for the life of the instance**. Rebooting doesn't change
@@ -74,42 +75,55 @@ Two things make a citation more durable than an IP address alone:
 
 ---
 
-## Can I get `https://`?
+## Can I get `https://`? { #can-i-get-https }
 
-Yes, but it needs a **domain name** — and that's a real requirement, not a
-formality. Certificate authorities will not issue a certificate for a bare IP
-address, so `https://149.165.170.42/` is not obtainable at any price.
+Yes, if you have a **domain name**: either your own, or a name your
+institution gives you, such as `salmon.myuniversity.edu`. Certificate
+authorities won't issue a certificate for a bare IP address, so
+`https://149.165.170.42/` isn't possible at any price.
 
-With a domain name pointed at your instance, the tooling can obtain and install
-a free Let's Encrypt certificate automatically.
+Without a domain name, nothing changes: your dashboard stays at
+`http://<your-instance-ip>/` and works exactly as before.
 
-The steps, which need a terminal and about 15 minutes:
+With one, it takes two steps:
 
-1. **Get a name pointed at your instance's IP.** Usually your institution's IT
-   department can add a record; otherwise any registrar will sell you one.
-2. On the instance, edit `deploy/deploy.env` in the tooling folder:
+1. **Point the name at your instance.** The name needs a DNS **A record**
+   containing your instance's IP address. Usually your institution's IT
+   department adds it for you; if you bought the domain yourself, it's in your
+   registrar's DNS settings. A new record can take up to an hour to work.
 
-   ```ini
-   SERVER_NAME="salmon.myuniversity.edu"
-   CERTBOT_EMAIL="you@myuniversity.edu"
-   ```
+    !!! warning "Using Cloudflare? Set the record to DNS only"
 
-3. Re-run the host provisioning:
+        Turn the record's orange cloud off (**DNS only**, grey cloud). With
+        Cloudflare's proxy on, the name points at Cloudflare's servers rather
+        than yours — **Check** says it points to addresses like
+        `104.21.x.x` or `172.67.x.x` — and the application can't set up
+        HTTPS for it. The same applies to any other DNS service that proxies
+        traffic.
+2. **In the application, on the Manage tab**, type the name under
+   [Web address](step4-manage.md#web-address) and press **Check**. Once it
+   says the name points to this server, press **Use this name with HTTPS**.
 
-   ```bash
-   cd ~/Jetstream2_Dashboard_Deploy
-   sudo ./deploy/bootstrap.sh
-   ```
+That's all. The application gets a free certificate from Let's Encrypt,
+switches your dashboard to `https://your-name/` (the old `http://` addresses,
+including the IP, redirect there), and renews the certificate automatically
+from then on. Nothing needs a terminal, a password or an email address.
 
-It requests the certificate, installs it, and sets up automatic renewal. Your
-dashboard keeps running throughout.
+If anything goes wrong, nothing is changed and your dashboard stays at its
+current address. The message says why; the usual reason is a DNS record that
+hasn't appeared yet. To go back to the IP address later, press **Stop using
+this name**.
 
-Full detail: [TLS](../reference/deployment.md#tls).
+??? info "From a terminal instead"
 
-!!! info "Also make sure port 443 is open"
+    ```bash
+    cd ~/Jetstream2_Dashboard_Deploy
+    ./deploy/lib/domain.sh salmon.myuniversity.edu        # does it point here?
+    sudo ./deploy/bootstrap.sh --set-domain salmon.myuniversity.edu
+    sudo ./deploy/bootstrap.sh --clear-domain             # back to the IP
+    ```
 
-    Your instance's security group needs to allow inbound `443/tcp` as well as
-    `80/tcp`. Exosphere's default rules usually cover both.
+    Full detail: [TLS](../reference/deployment.md#tls).
 
 ---
 

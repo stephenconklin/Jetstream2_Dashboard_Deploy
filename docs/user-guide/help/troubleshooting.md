@@ -326,6 +326,55 @@ These need a terminal.
 
 ---
 
+## HTTPS and your domain name
+
+??? failure "Check says the name doesn't exist, or points somewhere else"
+
+    The name's DNS record isn't pointing at this server yet. The message shows
+    where it points now and this server's address. Ask whoever manages the
+    domain to set its **A record** to this server's IP address. A new or
+    changed record can take up to an hour to be seen everywhere; press
+    **Check** again then. Nothing is set up until Check passes.
+
+    **If it points to addresses like `104.21.x.x` or `172.67.x.x`**, the name
+    is on Cloudflare with its proxy turned on (the orange cloud). Turn it off
+    for that record (**DNS only**, grey cloud), wait a minute, and Check
+    again.
+
+    Keeping Cloudflare's proxy instead is possible, but it's a different
+    setup: Cloudflare then provides the HTTPS, so don't press **Use this name
+    with HTTPS**. With Cloudflare's SSL mode on *Flexible*, it causes an
+    endless redirect loop.
+
+??? failure "“HTTPS wasn't set up”"
+
+    The certificate couldn't be obtained, so nothing was changed and the
+    dashboard stays at its old address. The message includes Let's Encrypt's
+    own reason. The usual ones:
+
+    - **The DNS record changed in the last hour.** Let's Encrypt may still see
+      the old one. Wait, then try again.
+    - **Port 80 is blocked** in the instance's security group (in Exosphere or
+      Horizon). Let's Encrypt checks the name by connecting to port 80, so it
+      has to stay open even though visitors are sent to HTTPS.
+    - **Too many attempts.** Let's Encrypt allows only five failed checks an
+      hour for a name. Wait an hour.
+
+??? failure "`https://` doesn't load, but `http://` did"
+
+    Port **443** is probably blocked in the instance's security group. Allow
+    inbound `443/tcp` (Exosphere's default rules usually allow it), or press
+    **Stop using this name** to go back to the IP address meanwhile.
+
+??? failure "The browser warns about the certificate"
+
+    Usually it's the address being visited: the certificate is for your
+    domain name, so `https://<the IP address>/` will always warn. Use
+    `https://your-name/`. Plain `http://` addresses redirect there by
+    themselves.
+
+---
+
 ## Application problems
 
 ??? failure "The desktop icon does nothing"

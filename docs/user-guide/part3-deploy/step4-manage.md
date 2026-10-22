@@ -183,6 +183,48 @@ It can take a few minutes on a large cache. The button greys out while it works.
 
 ---
 
+## Web address
+
+Shows your dashboard's current address, and puts it on your own domain name
+with HTTPS. With no domain name, there's nothing to do here: the dashboard
+stays at `http://<your-instance-ip>/`.
+
+<figure class="shot shot--todo">
+  <div class="shot__box">
+    <span class="shot__label">Screenshot needed</span>
+    <span class="shot__file">assets/screenshots/p3-tab4-web-address.png</span>
+  </div>
+  <figcaption>The Web address panel after a passing Check: the domain name
+  typed in, the "points to this server" message, and Use this name with HTTPS
+  enabled.</figcaption>
+</figure>
+
+To use a domain name, first point it at this server: a DNS **A record** with
+your instance's IP address (on Cloudflare, set to **DNS only**). See
+[Can I get https://?](share-your-dashboard.md#can-i-get-https). Then:
+
+1. Type the name, such as `salmon.myuniversity.edu`, and press **Check**. It
+   only looks, and changes nothing. It tells you whether the name points to
+   this server, and if not, where it points instead.
+2. Once Check says the name points here, press **Use this name with HTTPS**.
+   It takes a minute or two. The web server restarts, so anyone using the
+   dashboard at that moment needs to reload the page.
+
+If it fails, nothing is changed and the message says why. **Stop using this
+name** puts the dashboard back on the IP address over plain `http://`; the
+certificate is kept, so using the name again later is quick.
+
+<figure class="shot shot--todo">
+  <div class="shot__box">
+    <span class="shot__label">Screenshot needed</span>
+    <span class="shot__file">assets/screenshots/p3-tab4-web-address-https.png</span>
+  </div>
+  <figcaption>The Web address panel once HTTPS is on: "served at
+  https://… with HTTPS", and Stop using this name enabled.</figcaption>
+</figure>
+
+---
+
 ## Recent output from your app
 
 <figure class="shot shot--todo">
