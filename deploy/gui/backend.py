@@ -811,12 +811,54 @@ def check_domain(name: str) -> dict[str, str]:
     return out
 
 
-def _bootstrap_failure(proc: subprocess.CompletedProcess[str]) -> str:
-    """What to show when a bootstrap run fails: its own error, preceded by the
-    end of its progress output — certbot explains *why* it failed there, and
-    bootstrap's message refers to it ("certbot's reason is above")."""
-    tail = "\n".join(proc.stdout.strip().splitlines()[-20:])
-    return "\n\n".join(part for part in (tail, proc.stderr.strip()) if part)
+# certbot's own diagnostic lines: which name, what kind of failure, and Let's
+# Encrypt's explanation. Matched rather than taking the last N lines, because
+# what surrounds them is package-installer and progress noise.
+_CERTBOT_DETAIL_PREFIXES = ("Domain:", "Type:", "Detail:", "Hint:", "Certbot failed",
+                            "An unexpected error", "Error", "Challenge failed",
+                            "Some challenges have failed")
+
+
+def _save_bootstrap_log(proc: subprocess.CompletedProcess[str], what: str) -> Path | None:
+    """Keep a bootstrap run's full output in ~/dashboard-deploy-logs/.
+
+    The dialog shows only what matters; this is everything, for when that
+    isn't enough or someone needs to send it for help.
+    """
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        path = LOG_DIR / f"{what}-{time.strftime('%Y%m%d-%H%M%S')}.log"
+        path.write_text(f"exit status {proc.returncode}\n\n--- output ---\n{proc.stdout}"
+                        f"\n--- errors ---\n{proc.stderr}\n")
+        return path
+    except OSError:
+        return None
+
+
+def _bootstrap_failure(proc: subprocess.CompletedProcess[str], what: str) -> str:
+    """What to show when a bootstrap run fails, short enough for a dialog.
+
+    bootstrap's own explanation (its FAILED message, on stderr) first, then
+    certbot's diagnostic lines, then where the full output was saved. A plain
+    tail of the output didn't work: package-installer noise pushed the actual
+    reason off the bottom of the dialog.
+    """
+    lines = [line.strip() for line in (proc.stdout + "\n" + proc.stderr).splitlines()]
+    failed = proc.stderr.strip()
+    if "FAILED" in failed:
+        failed = failed[failed.index("FAILED"):]
+    failed = "\n".join(failed.splitlines()[:12])
+    details: list[str] = []
+    for line in lines:
+        if line.startswith(_CERTBOT_DETAIL_PREFIXES) and line not in details:
+            details.append(line)
+    parts = [failed] if failed else []
+    if details:
+        parts.append("Let's Encrypt / certbot said:\n" + "\n".join(details[:10]))
+    log = _save_bootstrap_log(proc, what)
+    if log:
+        parts.append(f"The full output is in {log}")
+    return "\n\n".join(parts) or "No explanation was printed."
 
 
 def set_domain(name: str) -> str:
@@ -831,7 +873,7 @@ def set_domain(name: str) -> str:
     proc = _run_as_root([str(BOOTSTRAP), "--yes", "--set-domain", name.strip()],
                         timeout=900)
     if proc.returncode != 0:
-        raise BackendError("HTTPS wasn't set up.", _bootstrap_failure(proc),
+        raise BackendError("HTTPS wasn't set up.", _bootstrap_failure(proc, "https-setup"),
                            proc.returncode)
     return proc.stdout
 
@@ -841,7 +883,7 @@ def clear_domain() -> str:
     proc = _run_as_root([str(BOOTSTRAP), "--yes", "--clear-domain"], timeout=900)
     if proc.returncode != 0:
         raise BackendError("Couldn't stop using the domain name.",
-                           _bootstrap_failure(proc), proc.returncode)
+                           _bootstrap_failure(proc, "https-clear"), proc.returncode)
     return proc.stdout
 
 

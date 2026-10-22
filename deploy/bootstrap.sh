@@ -114,6 +114,15 @@ step "Preflight"
 
 [[ $EUID -eq 0 ]] || die "Must run as root:  sudo $0${*:+ $*}"
 
+# Package installs never have a terminal to ask questions on — the desktop
+# app runs this with none at all — so say so up front, before --set-domain's
+# certbot install as well as the base packages. Otherwise debconf prints a
+# dozen lines of "unable to initialize frontend" that bury a real error.
+# NEEDRESTART_SUSPEND skips Ubuntu's "which services need restarting" scan
+# after each install, which is slow and only adds more output here.
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_SUSPEND=1
+
 # The invoking (non-root) user owns the checkout and should own anything this
 # script creates on their behalf. Deploying as root would leave root-owned
 # files scattered through a researcher's project directory.
@@ -489,7 +498,6 @@ fi
 # Host packages
 # ---------------------------------------------------------------------------
 step "Base packages"
-export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 # iproute2 provides `ss`, used above and by the port-conflict check below.
 apt-get install -y -qq ca-certificates curl git gnupg lsb-release iproute2 >/dev/null
