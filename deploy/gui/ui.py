@@ -1500,7 +1500,12 @@ class ManageTab(ttk.Frame):
         self._checked_domain = ""
         self._https_name = ""
         self._domain_busy = False
+        self._web_address_shown = False
         self.domain_var.trace_add("write", lambda *_: self._update_domain_buttons())
+        # The name last checked here, so it survives closing the app while a
+        # DNS change propagates. Only fills an empty field; when HTTPS is on,
+        # _apply_web_address shows the name actually in use instead.
+        self.domain_var.set(backend.last_domain())
 
         log_box = ttk.LabelFrame(self, text="Recent output from your app", padding=PAD)
         log_box.grid(row=6, column=0, sticky="nsew", pady=(PAD, 0))
@@ -1781,14 +1786,19 @@ class ManageTab(ttk.Frame):
         """Show the current address and which domain actions apply. UI thread."""
         if self._domain_busy:
             return
+        first_reading = not self._web_address_shown
         if url.startswith("https://"):
             self._https_name = url[len("https://"):].strip("/")
+            # The name in use replaces whatever was last checked — but only on
+            # the first reading after the app opens (or into an empty field):
+            # this runs on every 30-second refresh, and must never overwrite a
+            # new name someone is typing to switch to.
+            if not self._web_address_shown or not self.domain_var.get().strip():
+                self.domain_var.set(self._https_name)
             self.web_summary.set(
                 f"Your dashboard is served at {url} with HTTPS. Its certificate "
                 "renews automatically. Plain http:// addresses, including this "
                 "server's IP, redirect to it.")
-            if not self.domain_var.get().strip():
-                self.domain_var.set(self._https_name)
         else:
             self._https_name = ""
             where = url or "this server's IP address"
@@ -1797,6 +1807,8 @@ class ManageTab(ttk.Frame):
                 "with HTTPS instead, point the name at this server (an A record "
                 "with this server's IP address), then type it below and press "
                 "Check.")
+        if url and first_reading:
+            self._web_address_shown = True
         self._update_domain_buttons()
 
     def _update_domain_buttons(self) -> None:
@@ -1856,6 +1868,7 @@ class ManageTab(ttk.Frame):
                 public_ip=result.get("public_ip", "") or "this server's address"))
             if result.get("domain_ok") == "1":
                 self._checked_domain = result.get("domain", name.lower())
+                backend.remember_domain(self._checked_domain)
                 if self._checked_domain == self._https_name:
                     self.domain_result.set(
                         f"{self._checked_domain} is already this dashboard's "

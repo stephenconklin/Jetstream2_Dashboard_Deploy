@@ -791,6 +791,30 @@ def persist_mount(uuid: str, mountpoint: str, fstype: str) -> str:
     return proc.stdout
 
 
+LAST_DOMAIN_FILE = STATE_DIR / "last-domain"
+
+
+def last_domain() -> str:
+    """The domain name that last passed Check, or "" — a convenience only.
+
+    So a researcher who checks a name, closes the app and comes back after
+    their DNS has propagated doesn't have to retype it. Not the server's
+    setting: that's SERVER_NAME in deploy.env, written only once HTTPS works.
+    """
+    try:
+        return LAST_DOMAIN_FILE.read_text().strip()
+    except OSError:
+        return ""
+
+
+def remember_domain(name: str) -> None:
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        LAST_DOMAIN_FILE.write_text(name.strip() + "\n")
+    except OSError:
+        pass
+
+
 def check_domain(name: str) -> dict[str, str]:
     """Whether a domain name points at this server, from domain.sh --porcelain.
 
