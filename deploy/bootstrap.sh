@@ -287,6 +287,34 @@ obtain_certificate() {
   certbot "${common[@]}"
 }
 
+# Install certbot and the renewal reload hook if they aren't here. Called by
+# the normal provision (after nginx is installed) and by --set-domain, so the
+# desktop app's "Use this name with HTTPS" works on an instance provisioned
+# before this feature existed, instead of telling a researcher to go and run
+# bootstrap from a terminal. Only ever called with nginx already installed:
+# python3-certbot-nginx can pull nginx in, and a first nginx install must stay
+# inside the policy-rc.d guard in the nginx step. Returns non-zero if the
+# install fails.
+ensure_certbot() {
+  if command -v certbot >/dev/null 2>&1; then
+    skip "certbot installed"
+  else
+    # A fresh package index: on an instance provisioned long ago the cached
+    # one can name package versions the mirror no longer has.
+    apt-get update -qq || true
+    apt-get install -y -qq --no-install-recommends certbot python3-certbot-nginx >/dev/null \
+      || return 1
+    ok "certbot installed (used only if a domain name is set)"
+  fi
+  # Reload nginx whenever a renewal puts new certificate files in place: nginx
+  # reads them only at start or reload, so without this a renewed certificate
+  # would sit unused until it was the old one that expired.
+  install -d -m 0755 "$(dirname "$CERTBOT_RELOAD_HOOK")"
+  printf '#!/bin/sh\n# Installed by deploy/bootstrap.sh: pick up a renewed certificate.\nsystemctl reload nginx\n' \
+    > "$CERTBOT_RELOAD_HOOK"
+  chmod 0755 "$CERTBOT_RELOAD_HOOK"
+}
+
 # Set KEY="VALUE" in deploy/deploy.env, creating it from the example when it
 # doesn't exist yet. The file stays owned by whoever owns the checkout, since
 # it's edited by hand too. Values are validated by the callers before they
@@ -333,9 +361,9 @@ if [[ -n "$SET_DOMAIN" ]]; then
     die "nginx isn't running here yet. Run 'sudo $0' once to provision the
        host, then set the domain. Nothing has been changed."
   fi
-  command -v certbot >/dev/null 2>&1 \
-    || die "certbot isn't installed yet. Run 'sudo $0' once to provision the
-       host, then set the domain. Nothing has been changed."
+  ensure_certbot || die "Couldn't install certbot (apt-get failed — see above). Nothing has
+       been changed. Try again in a few minutes; if it keeps failing, the
+       instance may not be able to reach Ubuntu's package mirror."
   if [[ -s "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]]; then
     ok "a certificate for $DOMAIN is already here"
   elif obtain_certificate "$DOMAIN" "$SET_EMAIL"; then
@@ -637,19 +665,10 @@ fi
 # no certificate, nothing for its renewal timer to do. After nginx, not with
 # the base packages, because python3-certbot-nginx can pull nginx in, and
 # nginx must not be installed or started outside the policy-rc.d guard above.
-if command -v certbot >/dev/null 2>&1; then
-  skip "certbot installed"
-else
-  apt-get install -y -qq --no-install-recommends certbot python3-certbot-nginx >/dev/null
-  ok "certbot installed (used only if a domain name is set)"
-fi
-# Reload nginx whenever a renewal puts new certificate files in place: nginx
-# reads them only at start or reload, so without this a renewed certificate
-# would sit unused until it was the old one that expired.
-install -d -m 0755 "$(dirname "$CERTBOT_RELOAD_HOOK")"
-printf '#!/bin/sh\n# Installed by deploy/bootstrap.sh: pick up a renewed certificate.\nsystemctl reload nginx\n' \
-  > "$CERTBOT_RELOAD_HOOK"
-chmod 0755 "$CERTBOT_RELOAD_HOOK"
+# Not fatal here: certbot is only used for a domain name, and an instance
+# without one must provision exactly as before even if the mirror is down.
+ensure_certbot || warn "couldn't install certbot — everything else is unaffected, but HTTPS under
+         a domain name needs it. Re-run bootstrap.sh later to retry."
 
 install -d -m 0755 "$MAINTENANCE_ROOT/_deploy"
 install -m 0644 "$SCRIPT_DIR/nginx/unavailable.html" "$MAINTENANCE_ROOT/_deploy/unavailable.html"
