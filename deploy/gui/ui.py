@@ -255,12 +255,22 @@ class ScrollableFrame(ttk.Frame):
     writes is not.
 
     Put children into ``.body``.
+
+    ``fill_height`` is for tabs whose layout stretches a pane (a log) to use
+    spare height. A plain canvas gives its contents only their natural height,
+    which would freeze that pane at its minimum; with ``fill_height`` the
+    contents are made at least as tall as the viewport, so they stretch when
+    the window has room and scroll when it doesn't. Tabs 3 and 4 relied on a
+    window minimum size instead until a researcher's screen was shorter than
+    it and the bottom of the Manage tab became unreachable.
     """
 
-    def __init__(self, parent) -> None:
+    def __init__(self, parent, fill_height: bool = False, padding=PAD) -> None:
         super().__init__(parent)
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
+        self._fill_height = fill_height
+        self._viewport_height = 0
 
         self._canvas = tk.Canvas(self, highlightthickness=0, borderwidth=0)
         self._canvas.grid(row=0, column=0, sticky="nsew")
@@ -268,7 +278,7 @@ class ScrollableFrame(ttk.Frame):
                                   command=self._canvas.yview)
         self._canvas.configure(yscrollcommand=self._on_scroll_set)
 
-        self.body = ttk.Frame(self._canvas, padding=PAD)
+        self.body = ttk.Frame(self._canvas, padding=padding)
         self._window = self._canvas.create_window((0, 0), window=self.body,
                                                   anchor="nw")
 
@@ -281,12 +291,24 @@ class ScrollableFrame(ttk.Frame):
         self._canvas.bind_all("<MouseWheel>", self._on_mousewheel, add="+")
 
     def _on_body_resize(self, _event=None) -> None:
+        self._fit_height()
         self._canvas.configure(scrollregion=self._canvas.bbox("all"))
 
     def _on_canvas_resize(self, event) -> None:
         # Keep the inner frame as wide as the viewport so wraplength and
         # sticky="ew" behave as they would without the canvas.
         self._canvas.itemconfigure(self._window, width=event.width)
+        self._viewport_height = event.height
+        self._fit_height()
+
+    def _fit_height(self) -> None:
+        # The body's *requested* height is what its contents need; giving it
+        # more than that lets a weighted row absorb the rest. Setting the
+        # height doesn't change the request, so this can't feed back on itself.
+        if self._fill_height and self._viewport_height:
+            height = max(self.body.winfo_reqheight(), self._viewport_height)
+            self._canvas.itemconfigure(self._window, height=height)
+            self._canvas.configure(scrollregion=(0, 0, 0, height))
 
     def _on_scroll_set(self, first: str, last: str) -> None:
         # Only show the scrollbar when it's actually needed, so the common
@@ -303,6 +325,11 @@ class ScrollableFrame(ttk.Frame):
 
     def _pointer_inside(self) -> bool:
         widget = self.winfo_containing(self.winfo_pointerx(), self.winfo_pointery())
+        # Over a text pane that has more to show (a log), the wheel belongs to
+        # it: scrolling the page as well would move the log out from under
+        # the pointer.
+        if isinstance(widget, tk.Text) and widget.yview() != (0.0, 1.0):
+            return False
         while widget is not None:
             if widget is self:
                 return True
@@ -2070,8 +2097,15 @@ class MainWindow(ttk.Frame):
 
         self.app_tab = AppTab(pages[0], shared)
         self.data_tab = DataTab(pages[1], shared)
-        self.deploy_tab = DeployTab(pages[2], shared)
-        for page, tab in zip(pages, (self.app_tab, self.data_tab, self.deploy_tab)):
+        # Tabs 1 and 2 scroll inside themselves. Tabs 3 and 4 are wrapped in a
+        # height-filling scroller here, so their log panes still grow with the
+        # window but nothing is out of reach on a short screen.
+        publish_scroll = ScrollableFrame(pages[2], fill_height=True, padding=0)
+        publish_scroll.body.columnconfigure(0, weight=1)
+        publish_scroll.body.rowconfigure(0, weight=1)
+        self.deploy_tab = DeployTab(publish_scroll.body, shared)
+        self.deploy_tab.grid(row=0, column=0, sticky="nsew")
+        for page, tab in zip(pages, (self.app_tab, self.data_tab, publish_scroll)):
             tab.grid(row=1, column=0, sticky="nsew")
         for index, target, text in ((progress.APP, progress.DATA, "Next: Your data  →"),
                                     (progress.DATA, progress.PUBLISH, "Next: Publish  →")):
@@ -2080,11 +2114,15 @@ class MainWindow(ttk.Frame):
             btn.grid(row=2, column=0, sticky="e", padx=PAD, pady=(0, PAD))
             self.next_buttons[index] = btn
 
-        self.manage_tab = ManageTab(nb, shared, self.deploy_tab)
+        manage_page = ScrollableFrame(nb, fill_height=True, padding=0)
+        manage_page.body.columnconfigure(0, weight=1)
+        manage_page.body.rowconfigure(0, weight=1)
+        self.manage_tab = ManageTab(manage_page.body, shared, self.deploy_tab)
+        self.manage_tab.grid(row=0, column=0, sticky="nsew")
         self.deploy_tab.on_deployed = self._after_deploy
 
         self.tab_names = ("1. Your app", "2. Your data", "3. Publish", "4. Manage")
-        for page in (*pages, self.manage_tab):
+        for page in (*pages, manage_page):
             nb.add(page, text="")
         self.notebook = nb
 

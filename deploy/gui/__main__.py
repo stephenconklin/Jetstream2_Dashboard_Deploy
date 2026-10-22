@@ -96,15 +96,13 @@ def main() -> int:
     # Before the Docker check below, so its error dialog is themed too.
     _apply_theme(root)
     root.title("Deploy My Dashboard")
-    # Roomier than the pre-theme 820x720 / 720x560. The theme pads more than
-    # Tk's default, and tabs 3 and 4 have no scroll region to absorb it: the
-    # notebook reports the tallest tab needing ~671x692 at this machine's
-    # font size, so the old 560 floor clipped the Manage tab's log box. The
-    # minimum is set just above that measurement rather than guessed, and
-    # kept small enough to still fit a 1024x768 remote desktop. Re-measure
-    # (root.winfo_reqheight() with each tab selected) before changing it.
+    # Every tab scrolls when its content is taller than the window, so the
+    # minimum only has to keep the layout sensible, not hold everything: a
+    # floor tall enough for the tallest tab once clipped the Manage tab on a
+    # researcher's shorter remote-desktop screen, where the window couldn't
+    # be that tall. Small enough for a 1024x768 desktop with its panels.
     root.geometry("900x780")
-    root.minsize(720, 700)
+    root.minsize(720, 520)
 
     ok, why = backend.docker_available()
     if not ok:
