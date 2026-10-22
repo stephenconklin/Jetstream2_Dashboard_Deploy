@@ -1,0 +1,36 @@
+
+# ---------------------------------------------------------------------------
+# Port 80 under HTTPS: redirect, and keep the two things that must stay HTTP.
+# ---------------------------------------------------------------------------
+# Appended by deploy/bootstrap.sh to the dashboard site only when it serves
+# HTTPS under __SERVER_NAME__ (the main server block above then listens on
+# 443). Without a certificate, none of this exists and port 80 serves the
+# dashboard exactly as before.
+#
+# The only server on port 80, so it is the default for every Host: a visitor
+# who types the bare IP, or an old http:// link, is sent to the name the
+# certificate is for, rather than to a certificate warning.
+server {
+    listen 80;
+    __LISTEN_IPV6_80__
+    server_name _;
+
+    server_tokens off;
+
+    # nginx's own liveness, kept on plain HTTP so manage.sh and bootstrap can
+    # still tell "the proxy is down" from "the dashboard is down" without
+    # depending on the certificate. Same reserved /_deploy/ prefix as above.
+    location = /_deploy/health {
+        access_log off;
+        default_type text/plain;
+        return 200 "nginx-ok\n";
+    }
+
+    # certbot's nginx authenticator answers Let's Encrypt's renewal challenge
+    # under /.well-known/acme-challenge/ by adding a location of its own here
+    # for the few seconds it needs, then removing it — so nothing for it is
+    # configured permanently.
+    location / {
+        return 301 https://__SERVER_NAME__$request_uri;
+    }
+}

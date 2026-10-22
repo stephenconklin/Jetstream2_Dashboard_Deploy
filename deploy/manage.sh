@@ -181,10 +181,12 @@ cmd_status() {
 # The `|| echo` fallback that would be the obvious way to write this is a
 # trap: on a refused connection curl prints "000" via -w AND exits non-zero,
 # so the fallback appends a second one and the result reads "000000".
+# http_code URL [TIMEOUT [extra curl args...]]
 http_code() {
   command -v curl >/dev/null 2>&1 || { echo "000"; return 0; }
-  local code
-  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time "${2:-8}" "$1" 2>/dev/null)" || true
+  local url="$1" timeout="${2:-8}" code
+  shift; [[ $# -gt 0 ]] && shift
+  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time "$timeout" "$@" "$url" 2>/dev/null)" || true
   echo "${code:-000}"
 }
 
@@ -230,7 +232,13 @@ cmd_health() {
   # when there is one, the difference between them is the whole diagnosis.
   local app_code public_code nginx_code="skipped"
   app_code="$(http_code "$(app_direct_url)")"
-  public_code="$(http_code "$(public_local_url)")"
+  # Under HTTPS this is https://<name>/ pinned to this machine (see
+  # public_curl_args), so a broken certificate counts as a broken public path.
+  local -a public_args=()
+  # A read loop, not mapfile: macOS's bash 3.2 has no mapfile.
+  local public_arg
+  while IFS= read -r public_arg; do public_args+=("$public_arg"); done < <(public_curl_args)
+  public_code="$(http_code "$(public_local_url)" 8 "${public_args[@]+"${public_args[@]}"}")"
   if [[ "$PROXY_ENABLED" -eq 1 ]]; then
     nginx_code="$(http_code "http://127.0.0.1${DEPLOY_RESERVED_PREFIX}health" 5)"
   fi

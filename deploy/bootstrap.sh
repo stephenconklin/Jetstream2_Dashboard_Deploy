@@ -6,6 +6,9 @@
 #   sudo ./deploy/bootstrap.sh /path/to/project       # provision, then deploy
 #   sudo ./deploy/bootstrap.sh --check                # read-only status
 #   sudo ./deploy/bootstrap.sh --remove-proxy         # roll back to no nginx
+#   sudo ./deploy/bootstrap.sh --set-domain dash.example.org [--email you@example.org]
+#                                                     # serve HTTPS under that name
+#   sudo ./deploy/bootstrap.sh --clear-domain         # back to http://<IP>/
 #
 # Target: a fresh Ubuntu 22.04/24.04 Jetstream2 instance. Idempotent — every
 # step detects existing state and skips, so re-running is the normal way to
@@ -50,18 +53,37 @@ source "$SCRIPT_DIR/lib/proxy.sh"
 # For LOW_DISK_GB and the free-space helpers, shared with manage.sh so the
 # threshold warned about here and the one the GUI reports are the same number.
 source "$SCRIPT_DIR/lib/disk.sh"
+# For check_domain(), the read-only "does this name point here?" test the
+# desktop app also runs before asking for HTTPS.
+source "$SCRIPT_DIR/lib/domain.sh"
 
 MODE="full"
 ASSUME_YES=0
 PROJECT_DIR=""
-for arg in "$@"; do
+SET_DOMAIN=""
+SET_EMAIL=""
+CLEAR_DOMAIN=0
+# --set-domain and --email take a value, so they are read in a first pass;
+# everything else keeps the single-word handling below.
+args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --set-domain)  [[ $# -ge 2 ]] || { echo "--set-domain needs a name" >&2; exit 2; }
+                   SET_DOMAIN="$2"; shift 2 ;;
+    --email)       [[ $# -ge 2 ]] || { echo "--email needs an address" >&2; exit 2; }
+                   SET_EMAIL="$2"; shift 2 ;;
+    --clear-domain) CLEAR_DOMAIN=1; shift ;;
+    *)             args+=("$1"); shift ;;
+  esac
+done
+for arg in "${args[@]+"${args[@]}"}"; do
   case "$arg" in
     --check)         MODE="check" ;;
     --remove-proxy)  MODE="remove-proxy" ;;
     --yes|-y)        ASSUME_YES=1 ;;
     # -E, not a basic-regex `\?`: BSD sed (macOS, where this repo is developed)
     # matches that literally rather than as "optional".
-    --help|-h)       sed -n '2,12p' "$0" | sed -E 's/^# ?//'; exit 0 ;;
+    --help|-h)       sed -n '2,16p' "$0" | sed -E 's/^# ?//'; exit 0 ;;
     -*)              echo "Unknown option: $arg (try --help)" >&2; exit 2 ;;
     *)               PROJECT_DIR="$arg" ;;
   esac
@@ -92,7 +114,13 @@ step "Preflight"
 # The invoking (non-root) user owns the checkout and should own anything this
 # script creates on their behalf. Deploying as root would leave root-owned
 # files scattered through a researcher's project directory.
-REAL_USER="${SUDO_USER:-root}"
+# pkexec, the desktop app's fallback when passwordless sudo isn't available,
+# reports the caller as a uid rather than SUDO_USER.
+REAL_USER="${SUDO_USER:-}"
+if [[ -z "$REAL_USER" && -n "${PKEXEC_UID:-}" ]]; then
+  REAL_USER="$(id -nu "$PKEXEC_UID" 2>/dev/null || true)"
+fi
+REAL_USER="${REAL_USER:-root}"
 REAL_HOME="$(getent passwd "$REAL_USER" | cut -d: -f6)"
 [[ -n "$REAL_HOME" ]] || die "Cannot resolve a home directory for user '$REAL_USER'"
 ok "running as root on behalf of '$REAL_USER'"
@@ -110,6 +138,10 @@ fi
 SERVER_NAME=""
 CERTBOT_EMAIL=""
 ENABLE_TLS="yes"
+# ACME directory to request certificates from. Empty means Let's Encrypt's
+# production service. Set to Let's Encrypt staging to rehearse, or to a local
+# Pebble server in testing (with REQUESTS_CA_BUNDLE pointing at its CA).
+CERTBOT_SERVER=""
 APP_HOST_PORT="8080"
 CLIENT_MAX_BODY_SIZE="100m"
 RATE_LIMIT="30r/s"
@@ -132,17 +164,22 @@ else
   ok "no deploy.env — using built-in defaults (copy deploy.env.example to change them)"
 fi
 
+# Names are case-insensitive, and certbot and nginx both want them lower-case.
+SERVER_NAME="$(printf '%s' "$SERVER_NAME" | tr '[:upper:]' '[:lower:]')"
+
 [[ "$APP_HOST_PORT" =~ ^[0-9]+$ ]] || die "APP_HOST_PORT must be a port number, got '$APP_HOST_PORT'"
 [[ "$APP_HOST_PORT" != "80" ]] || die "APP_HOST_PORT cannot be 80 — nginx needs that port."
 
 # Let's Encrypt cannot issue for a bare IP. Work that out now rather than
 # letting certbot fail two thirds of the way through an otherwise fine run.
+# An email is optional: Let's Encrypt no longer sends expiry reminders, and
+# renewal is automatic, so it's only a contact address on the account.
 TLS_OK="no"
 if [[ -n "$SERVER_NAME" && "$ENABLE_TLS" == "yes" ]]; then
   if [[ "$SERVER_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     warn "SERVER_NAME is a bare IP — Let's Encrypt cannot issue for IPs. TLS skipped."
-  elif [[ -z "$CERTBOT_EMAIL" ]]; then
-    warn "CERTBOT_EMAIL is empty — TLS skipped."
+  elif ! domain_name_is_valid "$SERVER_NAME"; then
+    warn "SERVER_NAME='$SERVER_NAME' isn't a valid domain name. TLS skipped."
   else
     TLS_OK="yes"
   fi
@@ -152,7 +189,174 @@ PROXY_STATE_FILE="$PROXY_ENV_FILE"
 VNC_FIREWALL_BIN="/usr/local/libexec/dashboard-deploy-vnc-firewall.sh"
 VNC_FIREWALL_UNIT="dashboard-deploy-vnc-firewall.service"
 NGINX_SITE="/etc/nginx/sites-available/dashboard"
+NGINX_TLS_SNIPPET="/etc/nginx/snippets/dashboard-tls.conf"
 MAINTENANCE_ROOT="/var/www/dashboard-deploy"
+CERTBOT_RELOAD_HOOK="/etc/letsencrypt/renewal-hooks/deploy/dashboard-deploy-reload"
+
+# Whether a certificate for SERVER_NAME is on disk, i.e. whether the site
+# should be rendered for HTTPS. The decision is the certificate's existence,
+# not the setting alone: a name whose certificate request failed keeps the
+# plain HTTP site, so the dashboard never ends up half-switched.
+tls_cert_ready() {
+  [[ -n "$SERVER_NAME" && "$ENABLE_TLS" == "yes" \
+     && -s "/etc/letsencrypt/live/$SERVER_NAME/fullchain.pem" \
+     && -s "/etc/letsencrypt/live/$SERVER_NAME/privkey.pem" ]]
+}
+
+# Render the nginx site for "http" (today's config, byte for byte, which is
+# what every instance without a domain name keeps) or "https" (the same
+# server block on 443 with the TLS snippet, plus a port-80 block that
+# redirects). Writes $NGINX_SITE and, for https, $NGINX_TLS_SNIPPET.
+render_nginx_site() {
+  local mode="$1" listen listen6 listen6_80 tls_include_expr
+  # Binding [::] on a host with IPv6 disabled doesn't degrade — nginx fails to
+  # start outright. Render those lines as comments there instead.
+  local have_ipv6=0
+  [[ -e /proc/net/if_inet6 ]] && have_ipv6=1
+
+  if [[ "$mode" == "https" ]]; then
+    listen="listen 443 ssl;"
+    if [[ "$have_ipv6" -eq 1 ]]; then
+      listen6="listen [::]:443 ssl;"
+      listen6_80="listen [::]:80;"
+    else
+      listen6="# listen [::]:443 ssl;  (IPv6 unavailable on this host)"
+      listen6_80="# listen [::]:80;  (IPv6 unavailable on this host)"
+    fi
+    tls_include_expr="s|__TLS_INCLUDE__|include $NGINX_TLS_SNIPPET;|"
+    install -d -m 0755 "$(dirname "$NGINX_TLS_SNIPPET")"
+    sed -e "s|__SERVER_NAME__|$SERVER_NAME|g" \
+      "$SCRIPT_DIR/nginx/dashboard-tls.conf.template" > "$NGINX_TLS_SNIPPET"
+  else
+    listen="listen 80;"
+    if [[ "$have_ipv6" -eq 1 ]]; then
+      listen6="listen [::]:80;"
+    else
+      listen6="# listen [::]:80;  (IPv6 unavailable on this host)"
+    fi
+    # The marker line goes entirely, so the HTTP site is identical to what
+    # this template rendered before HTTPS support existed.
+    tls_include_expr="/__TLS_INCLUDE__/d"
+  fi
+
+  # `|` as the sed delimiter, because RATE_LIMIT contains a slash ("30r/s").
+  sed -e "s|__LISTEN__|$listen|g" \
+      -e "$tls_include_expr" \
+      -e "s|__SERVER_NAME__|${SERVER_NAME:-_}|g" \
+      -e "s|__LISTEN_IPV6__|$listen6|g" \
+      -e "s|__APP_HOST_PORT__|$APP_HOST_PORT|g" \
+      -e "s|__CLIENT_MAX_BODY_SIZE__|$CLIENT_MAX_BODY_SIZE|g" \
+      -e "s|__RATE_LIMIT__|$RATE_LIMIT|g" \
+      -e "s|__RATE_BURST__|$RATE_BURST|g" \
+      -e "s|__CONN_LIMIT__|$CONN_LIMIT|g" \
+      -e "s|__PROXY_TIMEOUT__|$PROXY_TIMEOUT|g" \
+      -e "s|__MAINTENANCE_ROOT__|$MAINTENANCE_ROOT|g" \
+      "$SCRIPT_DIR/nginx/dashboard.conf.template" > "$NGINX_SITE"
+
+  if [[ "$mode" == "https" ]]; then
+    sed -e "s|__SERVER_NAME__|$SERVER_NAME|g" \
+        -e "s|__LISTEN_IPV6_80__|$listen6_80|g" \
+        "$SCRIPT_DIR/nginx/dashboard-http-redirect.conf.template" >> "$NGINX_SITE"
+  fi
+}
+
+# Ask Let's Encrypt (or CERTBOT_SERVER) for a certificate for $1, answering
+# its challenge through nginx, which must be running. certbot only obtains the
+# certificate — `certonly`, never its installer — so it doesn't edit the site;
+# render_nginx_site decides how it's served. Against production, a staging
+# dry run goes first, so a name that can't be validated fails without
+# spending Let's Encrypt's five-failures-an-hour allowance. Returns certbot's
+# status; its own output says why.
+obtain_certificate() {
+  local name="$1" email="${2:-}"
+  local -a common=(certonly --nginx -d "$name" --cert-name "$name"
+                   --non-interactive --agree-tos --keep-until-expiring)
+  if [[ -n "$email" ]]; then
+    common+=(-m "$email")
+  else
+    common+=(--register-unsafely-without-email)
+  fi
+  if [[ -n "$CERTBOT_SERVER" ]]; then
+    common+=(--server "$CERTBOT_SERVER")
+  else
+    certbot "${common[@]}" --dry-run || return 1
+  fi
+  certbot "${common[@]}"
+}
+
+# Set KEY="VALUE" in deploy/deploy.env, creating it from the example when it
+# doesn't exist yet. The file stays owned by whoever owns the checkout, since
+# it's edited by hand too. Values are validated by the callers before they
+# get here: the file is sourced by bash.
+set_deploy_env_key() {
+  local key="$1" value="$2" owner
+  if [[ ! -f "$ENV_FILE" ]]; then
+    cp "$SCRIPT_DIR/deploy.env.example" "$ENV_FILE"
+  fi
+  if grep -qE "^[[:space:]]*${key}=" "$ENV_FILE"; then
+    sed -i -E "s|^[[:space:]]*${key}=.*|${key}=\"${value}\"|" "$ENV_FILE"
+  else
+    printf '%s="%s"\n' "$key" "$value" >> "$ENV_FILE"
+  fi
+  owner="$(stat -c '%U:%G' "$SCRIPT_DIR" 2>/dev/null || true)"
+  [[ -n "$owner" ]] && chown "$owner" "$ENV_FILE" 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
+# --set-domain / --clear-domain: change which name the site is served under,
+# then fall through to the normal provision, which renders the site to match.
+#
+# --set-domain obtains the certificate BEFORE writing anything, so a name
+# that doesn't point here yet, or a certificate request that fails, stops
+# with every setting as it was and the dashboard still on its old address.
+# That's what lets the desktop app offer it as one button.
+# ---------------------------------------------------------------------------
+if [[ -n "$SET_DOMAIN" && "$CLEAR_DOMAIN" -eq 1 ]]; then
+  die "--set-domain and --clear-domain can't be used together."
+fi
+if [[ ( -n "$SET_DOMAIN" || "$CLEAR_DOMAIN" -eq 1 ) && "$MODE" != "full" ]]; then
+  die "--set-domain and --clear-domain can't be combined with --check or --remove-proxy."
+fi
+if [[ -n "$SET_DOMAIN" ]]; then
+  step "Domain name"
+  check_domain "$SET_DOMAIN"
+  [[ "$DOMAIN_OK" -eq 1 ]] || die "$(domain_reason_text)
+       Nothing has been changed."
+  ok "$(domain_reason_text)"
+  if [[ -n "$SET_EMAIL" && ! "$SET_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]+$ ]]; then
+    die "'$SET_EMAIL' doesn't look like an email address. Nothing has been changed."
+  fi
+  if ! command -v nginx >/dev/null 2>&1 || ! systemctl is-active --quiet nginx; then
+    die "nginx isn't running here yet. Run 'sudo $0' once to provision the
+       host, then set the domain. Nothing has been changed."
+  fi
+  command -v certbot >/dev/null 2>&1 \
+    || die "certbot isn't installed yet. Run 'sudo $0' once to provision the
+       host, then set the domain. Nothing has been changed."
+  if [[ -s "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]]; then
+    ok "a certificate for $DOMAIN is already here"
+  elif obtain_certificate "$DOMAIN" "$SET_EMAIL"; then
+    ok "certificate issued for $DOMAIN"
+  else
+    die "Couldn't get a certificate for $DOMAIN (certbot's reason is above).
+       Usual causes: the DNS record changed in the last hour and Let's Encrypt
+       still sees the old one, or port 80 is blocked in the Jetstream2 security
+       group. Nothing has been changed; the dashboard is still on its old address."
+  fi
+  set_deploy_env_key SERVER_NAME "$DOMAIN"
+  [[ -n "$SET_EMAIL" ]] && set_deploy_env_key CERTBOT_EMAIL "$SET_EMAIL"
+  SERVER_NAME="$DOMAIN"
+  [[ -n "$SET_EMAIL" ]] && CERTBOT_EMAIL="$SET_EMAIL"
+  TLS_OK="yes"
+  ok "deploy.env now names $DOMAIN — serving it over HTTPS below"
+elif [[ "$CLEAR_DOMAIN" -eq 1 ]]; then
+  step "Domain name"
+  set_deploy_env_key SERVER_NAME ""
+  SERVER_NAME=""
+  TLS_OK="no"
+  ok "domain name cleared — the site goes back to http://<this server's IP>/ below
+         (any certificate is kept, so setting the name again is quick)"
+fi
 
 # ---------------------------------------------------------------------------
 # --check: report and stop, changing nothing
@@ -183,6 +387,22 @@ if [[ "$MODE" == "check" ]]; then
     sed 's/^/    ---  /' "$PROXY_STATE_FILE"
   else
     warn "no $PROXY_STATE_FILE — the app publishes directly on port 80"
+  fi
+
+  step "HTTPS"
+  if [[ -z "$SERVER_NAME" ]]; then
+    echo "    ---  no domain name set — serving http://<this server's IP>/"
+  elif tls_cert_ready; then
+    expires="$(openssl x509 -enddate -noout -in "/etc/letsencrypt/live/$SERVER_NAME/fullchain.pem" 2>/dev/null | cut -d= -f2 || true)"
+    ok "certificate for $SERVER_NAME${expires:+, valid until $expires} (renews automatically)"
+    if grep -q '^PUBLIC_SCHEME=https' "$PROXY_STATE_FILE" 2>/dev/null; then
+      ok "serving https://$SERVER_NAME/"
+    else
+      warn "a certificate is here but the site isn't using it yet — re-run bootstrap.sh"
+    fi
+  else
+    warn "$SERVER_NAME is set but has no certificate yet, so the site is plain HTTP.
+         Check it with: ./deploy/lib/domain.sh $SERVER_NAME"
   fi
 
   step "Listening sockets"
@@ -408,32 +628,43 @@ else
   ok "nginx installed (not started yet — port 80 is still the dashboard's)"
 fi
 
+# certbot is installed whether or not a domain is configured, so an image
+# built from this host already has it and the desktop app's "use this name"
+# needs no apt-get (or working mirror) at click time. Inert without a name:
+# no certificate, nothing for its renewal timer to do. After nginx, not with
+# the base packages, because python3-certbot-nginx can pull nginx in, and
+# nginx must not be installed or started outside the policy-rc.d guard above.
+if command -v certbot >/dev/null 2>&1; then
+  skip "certbot installed"
+else
+  apt-get install -y -qq --no-install-recommends certbot python3-certbot-nginx >/dev/null
+  ok "certbot installed (used only if a domain name is set)"
+fi
+# Reload nginx whenever a renewal puts new certificate files in place: nginx
+# reads them only at start or reload, so without this a renewed certificate
+# would sit unused until it was the old one that expired.
+install -d -m 0755 "$(dirname "$CERTBOT_RELOAD_HOOK")"
+printf '#!/bin/sh\n# Installed by deploy/bootstrap.sh: pick up a renewed certificate.\nsystemctl reload nginx\n' \
+  > "$CERTBOT_RELOAD_HOOK"
+chmod 0755 "$CERTBOT_RELOAD_HOOK"
+
 install -d -m 0755 "$MAINTENANCE_ROOT/_deploy"
 install -m 0644 "$SCRIPT_DIR/nginx/unavailable.html" "$MAINTENANCE_ROOT/_deploy/unavailable.html"
 ok "maintenance page at $MAINTENANCE_ROOT/_deploy/unavailable.html"
 
-# Binding [::]:80 on a host with IPv6 disabled doesn't degrade — nginx fails
-# to start outright. Detect it and render that line as a comment instead, so
-# an IPv6-less instance still gets a working proxy.
+# HTTPS only once a certificate exists; otherwise today's HTTP site exactly.
+if tls_cert_ready; then
+  SITE_MODE="https"
+else
+  SITE_MODE="http"
+fi
 if [[ -e /proc/net/if_inet6 ]]; then
-  LISTEN_IPV6="listen [::]:80;"
   ok "IPv6 available — listening on it too"
 else
-  LISTEN_IPV6="# listen [::]:80;  (IPv6 unavailable on this host)"
   warn "IPv6 unavailable — nginx will listen on IPv4 only"
 fi
-
-# `|` as the sed delimiter, because RATE_LIMIT contains a slash ("10r/s").
-sed -e "s|__SERVER_NAME__|${SERVER_NAME:-_}|g" \
-    -e "s|__LISTEN_IPV6__|$LISTEN_IPV6|g" \
-    -e "s|__APP_HOST_PORT__|$APP_HOST_PORT|g" \
-    -e "s|__CLIENT_MAX_BODY_SIZE__|$CLIENT_MAX_BODY_SIZE|g" \
-    -e "s|__RATE_LIMIT__|$RATE_LIMIT|g" \
-    -e "s|__RATE_BURST__|$RATE_BURST|g" \
-    -e "s|__CONN_LIMIT__|$CONN_LIMIT|g" \
-    -e "s|__PROXY_TIMEOUT__|$PROXY_TIMEOUT|g" \
-    -e "s|__MAINTENANCE_ROOT__|$MAINTENANCE_ROOT|g" \
-    "$SCRIPT_DIR/nginx/dashboard.conf.template" > "$NGINX_SITE"
+render_nginx_site "$SITE_MODE"
+ok "site rendered for $SITE_MODE${SERVER_NAME:+ ($SERVER_NAME)}"
 
 rm -f /etc/nginx/sites-enabled/default
 ln -sf "$NGINX_SITE" /etc/nginx/sites-enabled/dashboard
@@ -504,38 +735,47 @@ if [[ "$probe" == "200" ]]; then
 else
   warn "nginx health probe -> $probe (see /var/log/nginx/dashboard.error.log)"
 fi
+# The state file was written above with PUBLIC_SCHEME=http; it says https only
+# now that nginx is actually serving it, which is what manage.sh and the app
+# read to show https://<name>/ as the address.
+if [[ "$SITE_MODE" == "https" ]]; then
+  sed -i 's|^PUBLIC_SCHEME=.*|PUBLIC_SCHEME=https|' "$PROXY_STATE_FILE"
+fi
 
 # ---------------------------------------------------------------------------
 # TLS
 # ---------------------------------------------------------------------------
 step "TLS"
-if [[ "$TLS_OK" == "yes" ]]; then
-  apt-get install -y -qq certbot python3-certbot-nginx >/dev/null
-  if certbot certificates 2>/dev/null | grep -q "Domains:.*\b$SERVER_NAME\b"; then
-    # A certificate already exists, but the site config was just re-rendered
-    # from the template a few lines above — which wiped the listen 443 / ssl_
-    # directives certbot had added. Re-install into the fresh config rather
-    # than skipping, or every re-run of bootstrap would silently drop the
-    # instance back to plain HTTP while reporting success.
-    if certbot install --nginx --cert-name "$SERVER_NAME" --redirect >/dev/null 2>&1; then
-      ok "existing certificate re-applied to the regenerated config"
-      sed -i 's|^PUBLIC_SCHEME=.*|PUBLIC_SCHEME=https|' "$PROXY_STATE_FILE"
-    else
-      warn "certificate exists but could not be re-applied — the site is HTTP only.
-         Try: sudo certbot install --nginx --cert-name $SERVER_NAME --redirect"
-    fi
-  elif certbot --nginx -d "$SERVER_NAME" --non-interactive --agree-tos \
-               -m "$CERTBOT_EMAIL" --redirect; then
-    ok "certificate issued; HTTP->HTTPS redirect enabled"
-    sed -i 's|^PUBLIC_SCHEME=.*|PUBLIC_SCHEME=https|' "$PROXY_STATE_FILE"
-  else
-    warn "certbot failed — the site remains available over plain HTTP.
-         Most common causes: DNS for $SERVER_NAME does not yet resolve to this
-         instance's floating IP, or port 80 is closed in the Jetstream2
-         security group. Fix, then re-run bootstrap.sh."
-  fi
+if [[ "$TLS_OK" != "yes" ]]; then
+  skip "no domain name configured — serving http://<this server's IP>/"
+elif [[ "$SITE_MODE" == "https" ]]; then
+  ok "serving https://$SERVER_NAME/ (certificate in /etc/letsencrypt/live/$SERVER_NAME/)"
 else
-  skip "no DNS name configured (set SERVER_NAME and CERTBOT_EMAIL in deploy.env)"
+  # A name is configured but there's no certificate yet: the deploy.env route
+  # rather than --set-domain. Check DNS first, then ask; either failing leaves
+  # the HTTP site running.
+  check_domain "$SERVER_NAME"
+  if [[ "$DOMAIN_OK" -ne 1 ]]; then
+    warn "$(domain_reason_text)
+         Serving plain HTTP until it does; re-run bootstrap.sh then."
+  elif ! obtain_certificate "$SERVER_NAME" "$CERTBOT_EMAIL"; then
+    warn "certbot couldn't get a certificate (its reason is above) — the site
+         stays on plain HTTP. Usual causes: DNS changed in the last hour, or
+         port 80 is blocked in the Jetstream2 security group. Re-run bootstrap.sh."
+  else
+    render_nginx_site https
+    if nginx -t 2>/dev/null; then
+      systemctl reload nginx
+      sed -i 's|^PUBLIC_SCHEME=.*|PUBLIC_SCHEME=https|' "$PROXY_STATE_FILE"
+      SITE_MODE="https"
+      ok "certificate issued; serving https://$SERVER_NAME/, with http:// redirecting"
+    else
+      # Shouldn't happen, but never leave a config nginx won't load.
+      render_nginx_site http
+      warn "the HTTPS config failed nginx's own check, so the site stays on plain
+         HTTP. See: sudo nginx -t"
+    fi
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -670,10 +910,15 @@ fi
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
-IP="$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')"
-SCHEME="http"
-grep -q '^PUBLIC_SCHEME=https' "$PROXY_STATE_FILE" && SCHEME="https"
-URL="$SCHEME://${SERVER_NAME:-$IP}/"
+IP="$(lookup_public_ip)"
+IP="${IP:-$(hostname -I | awk '{print $1}')}"
+# The name only once HTTPS is really serving it; until then the IP, which
+# always works — a name whose certificate request failed may not point here.
+if grep -q '^PUBLIC_SCHEME=https' "$PROXY_STATE_FILE" && [[ -n "$SERVER_NAME" ]]; then
+  URL="https://$SERVER_NAME/"
+else
+  URL="http://$IP/"
+fi
 
 step "Host provisioning complete"
 cat <<EOF

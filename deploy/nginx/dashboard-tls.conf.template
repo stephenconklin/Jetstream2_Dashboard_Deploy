@@ -1,0 +1,32 @@
+# TLS settings for the dashboard site, included into its main server block
+# only when the instance serves HTTPS under a domain name.
+#
+# Rendered by deploy/bootstrap.sh into /etc/nginx/snippets/dashboard-tls.conf
+# once a certificate for __SERVER_NAME__ exists. Do NOT edit that copy — edit
+# this template and re-run bootstrap.sh.
+#
+# Why this tooling writes the TLS config itself instead of letting certbot's
+# nginx installer edit the site in place: bootstrap re-renders the site from
+# its template on every run, which wiped certbot's edits, so every re-run
+# needed a `certbot install` step to put HTTPS back — and if that step failed,
+# the instance dropped to plain HTTP while bootstrap reported success. Here
+# certbot only obtains and renews the certificate (`certbot certonly --nginx`),
+# and the template decides how it's served, so a re-render reproduces HTTPS
+# exactly.
+
+ssl_certificate     /etc/letsencrypt/live/__SERVER_NAME__/fullchain.pem;
+ssl_certificate_key /etc/letsencrypt/live/__SERVER_NAME__/privkey.pem;
+
+# Modern protocols only. Every browser a dashboard visitor plausibly uses
+# speaks TLS 1.2 or 1.3; older versions are broken and no longer accepted by
+# current browsers anyway.
+ssl_protocols TLSv1.2 TLSv1.3;
+ssl_prefer_server_ciphers off;
+ssl_session_cache shared:dashtls:10m;
+ssl_session_timeout 1d;
+ssl_session_tickets off;
+
+# Deliberately no Strict-Transport-Security header yet. HSTS tells browsers
+# to refuse plain HTTP for this name for months; if the certificate then
+# lapses or the name is moved, visitors are locked out with no click-through.
+# Worth adding once a deployment has run on HTTPS for a while.

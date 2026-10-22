@@ -1366,9 +1366,9 @@ class ManageTab(ttk.Frame):
         self.shared = shared
         self.deploy_tab = deploy_tab
         self.columnconfigure(0, weight=1)
-        # Row 5 is the log box — the only thing that should absorb extra
+        # Row 6 is the log box — the only thing that should absorb extra
         # height when the window is resized.
-        self.rowconfigure(5, weight=1)
+        self.rowconfigure(6, weight=1)
 
         self.status = tk.StringVar(value="Checking…")
         WrapLabel(self, textvariable=self.status, wraplength=620,
@@ -1437,8 +1437,46 @@ class ManageTab(ttk.Frame):
                                       command=self._cleanup)
         self.cleanup_btn.grid(row=0, column=1, sticky="e", padx=(PAD, 0))
 
+        # The dashboard's address, and the way to put it on the researcher's
+        # own domain name with HTTPS. Everything except pointing the name at
+        # this server happens here: Check is read-only and unprivileged, and
+        # "Use this name" runs bootstrap.sh --set-domain, which gets the
+        # certificate before changing anything — so a failure leaves the
+        # dashboard exactly where it was.
+        web_box = ttk.LabelFrame(self, text="Web address", padding=PAD)
+        web_box.grid(row=5, column=0, sticky="ew", pady=(PAD, 0))
+        web_box.columnconfigure(1, weight=1)
+        self.web_summary = tk.StringVar(value="Checking…")
+        WrapLabel(web_box, textvariable=self.web_summary, wraplength=560,
+                  justify="left").grid(row=0, column=0, columnspan=5, sticky="ew")
+        ttk.Label(web_box, text="Your domain name:").grid(
+            row=1, column=0, sticky="w", pady=(PAD, 0))
+        self.domain_var = tk.StringVar()
+        domain_entry = ttk.Entry(web_box, textvariable=self.domain_var, width=32)
+        domain_entry.grid(row=1, column=1, sticky="ew", padx=PAD, pady=(PAD, 0))
+        domain_entry.bind("<Return>", lambda _e: self._check_domain())
+        self.check_domain_btn = ttk.Button(web_box, text="Check",
+                                           command=self._check_domain)
+        self.check_domain_btn.grid(row=1, column=2, pady=(PAD, 0))
+        self.use_domain_btn = ttk.Button(web_box, text="Use this name with HTTPS",
+                                         command=self._use_domain, state="disabled")
+        self.use_domain_btn.grid(row=1, column=3, padx=(PAD, 0), pady=(PAD, 0))
+        self.clear_domain_btn = ttk.Button(web_box, text="Stop using this name",
+                                           command=self._clear_domain, state="disabled")
+        self.clear_domain_btn.grid(row=1, column=4, padx=(PAD, 0), pady=(PAD, 0))
+        self.domain_result = tk.StringVar(value="")
+        WrapLabel(web_box, textvariable=self.domain_result, wraplength=560,
+                  justify="left", style="Muted.TLabel").grid(
+            row=2, column=0, columnspan=5, sticky="ew", pady=(4, 0))
+        # The name that last passed Check. "Use this name" works only for that
+        # exact name, so editing the field after a check disables it again.
+        self._checked_domain = ""
+        self._https_name = ""
+        self._domain_busy = False
+        self.domain_var.trace_add("write", lambda *_: self._update_domain_buttons())
+
         log_box = ttk.LabelFrame(self, text="Recent output from your app", padding=PAD)
-        log_box.grid(row=5, column=0, sticky="nsew", pady=(PAD, 0))
+        log_box.grid(row=6, column=0, sticky="nsew", pady=(PAD, 0))
         log_box.columnconfigure(0, weight=1)
         log_box.rowconfigure(0, weight=1)
         self.logs = tk.Text(log_box, height=12, wrap="none", state="disabled",
@@ -1596,6 +1634,7 @@ class ManageTab(ttk.Frame):
         for key, var in self._detail_vars.items():
             var.set(values.get(key) or "—")
 
+        self._apply_web_address(health.get("url", "") or self.url)
         self.restart_label.set(
             "Start" if health.get("state") in ("exited", "created", "paused") else "Restart")
         self.open_btn.configure(state="normal" if self.url else "disabled")
@@ -1643,10 +1682,10 @@ class ManageTab(ttk.Frame):
         """
         if not messagebox.askyesno(
                 "Free up space?",
-                "This removes leftover pieces of previous builds and the build "
-                "cache.\n\nYour dashboard keeps running and is not affected. The "
-                "next time you publish will be slower, because those pieces have "
-                "to be rebuilt.\n\nContinue?"):
+                "This removes leftover pieces of previous builds and build "
+                "cache nothing uses any more.\n\nYour dashboard keeps running "
+                "and is not affected, and publishing it again stays as quick as "
+                "before.\n\nContinue?"):
             return
 
         self.cleanup_btn.configure(state="disabled")
@@ -1687,6 +1726,163 @@ class ManageTab(ttk.Frame):
             self.refresh()
 
         self.after(200, drain)
+
+    # domain.sh's reason enum -> what to tell the researcher. The app never
+    # parses domain.sh's sentences; it renders the enum from this table.
+    DOMAIN_REASONS = {
+        "ok": "{domain} points to this server ({public_ip}). You can use it.",
+        "empty": "Type your domain name first, such as dashboard.example.org.",
+        "invalid_name": "That isn't a domain name. Type just the name, such as "
+                        "dashboard.example.org, without https:// or a slash.",
+        "is_ip": "That's an IP address. HTTPS needs a domain name pointed at this "
+                 "server, such as dashboard.example.org.",
+        "not_resolving": "{domain} doesn't exist in DNS yet. Whoever manages your "
+                         "domain needs to add an A record pointing it at this "
+                         "server's IP address. A new record can take up to an hour "
+                         "to appear; check again then.",
+        "points_elsewhere": "{domain} points to {resolves_to}, not this server "
+                            "({public_ip}). Its A record needs to say {public_ip}. "
+                            "A change can take up to an hour to appear.",
+        "public_ip_unknown": "Couldn't work out this server's public address to "
+                             "compare with. It may not have internet access right "
+                             "now; try again in a minute.",
+    }
+
+    def _apply_web_address(self, url: str) -> None:
+        """Show the current address and which domain actions apply. UI thread."""
+        if self._domain_busy:
+            return
+        if url.startswith("https://"):
+            self._https_name = url[len("https://"):].strip("/")
+            self.web_summary.set(
+                f"Your dashboard is served at {url} with HTTPS. Its certificate "
+                "renews automatically. Plain http:// addresses, including this "
+                "server's IP, redirect to it.")
+            if not self.domain_var.get().strip():
+                self.domain_var.set(self._https_name)
+        else:
+            self._https_name = ""
+            where = url or "this server's IP address"
+            self.web_summary.set(
+                f"Your dashboard's address is {where}. To use your own domain name "
+                "with HTTPS instead, point the name at this server (an A record "
+                "with this server's IP address), then type it below and press "
+                "Check.")
+        self._update_domain_buttons()
+
+    def _update_domain_buttons(self) -> None:
+        if self._domain_busy:
+            for btn in (self.check_domain_btn, self.use_domain_btn, self.clear_domain_btn):
+                btn.configure(state="disabled")
+            return
+        typed = self.domain_var.get().strip().lower().rstrip(".")
+        self.check_domain_btn.configure(state="normal")
+        ready = bool(typed) and typed == self._checked_domain and typed != self._https_name
+        self.use_domain_btn.configure(state="normal" if ready else "disabled")
+        self.clear_domain_btn.configure(state="normal" if self._https_name else "disabled")
+
+    def _run_domain_job(self, start_text: str, job, on_done) -> None:
+        """Run a domain call on a worker thread, with the buttons disabled."""
+        self._domain_busy = True
+        self._update_domain_buttons()
+        self.domain_result.set(start_text)
+        result_queue: queue.Queue[dict] = queue.Queue()
+
+        def work() -> None:
+            try:
+                result_queue.put({"ok": job()})
+            except backend.BackendError as exc:
+                result_queue.put({"error": exc.full_text()})
+            except Exception as exc:
+                result_queue.put({"error": str(exc)})
+
+        threading.Thread(target=work, daemon=True).start()
+
+        def drain() -> None:
+            try:
+                outcome = result_queue.get_nowait()
+            except queue.Empty:
+                self.after(200, drain)
+                return
+            self._domain_busy = False
+            on_done(outcome)
+            self._update_domain_buttons()
+
+        self.after(200, drain)
+
+    def _check_domain(self) -> None:
+        name = self.domain_var.get().strip()
+        self._checked_domain = ""
+
+        def done(outcome: dict) -> None:
+            if "error" in outcome:
+                self.domain_result.set(outcome["error"])
+                return
+            result = outcome["ok"]
+            template = self.DOMAIN_REASONS.get(result.get("reason", ""),
+                                               "Couldn't check that name: {reason}")
+            self.domain_result.set(template.format(
+                domain=result.get("domain", name), reason=result.get("reason", ""),
+                resolves_to=result.get("resolves_to", "") or "nowhere",
+                public_ip=result.get("public_ip", "") or "this server's address"))
+            if result.get("domain_ok") == "1":
+                self._checked_domain = result.get("domain", name.lower())
+
+        self._run_domain_job("Checking…", lambda: backend.check_domain(name), done)
+
+    def _use_domain(self) -> None:
+        name = self._checked_domain
+        if not name or not messagebox.askyesno(
+                "Use this name with HTTPS?",
+                f"Your dashboard will be served at https://{name}/\n\n"
+                "This gets a free certificate from Let's Encrypt and restarts the "
+                "web server, which takes a minute or two. Anyone using the "
+                "dashboard right now is disconnected for a moment and will need "
+                "to reload the page.\n\nIf anything goes wrong, nothing is "
+                "changed and the dashboard stays at its current address.\n\n"
+                "Continue?"):
+            return
+
+        def done(outcome: dict) -> None:
+            if "error" in outcome:
+                self.domain_result.set("HTTPS wasn't set up; the dashboard is "
+                                       "unchanged. The reason is in the message.")
+                messagebox.showerror("HTTPS wasn't set up", outcome["error"])
+            else:
+                self.domain_result.set(f"Done. Your dashboard is at https://{name}/")
+                messagebox.showinfo("Your dashboard has a new address",
+                                    f"Your dashboard is now at\n\nhttps://{name}/\n\n"
+                                    "The old http:// address redirects there.")
+                self._checked_domain = ""
+            self.refresh()
+
+        self._run_domain_job("Setting up HTTPS… this takes a minute or two.",
+                             lambda: backend.set_domain(name), done)
+
+    def _clear_domain(self) -> None:
+        name = self._https_name
+        if not name or not messagebox.askyesno(
+                "Stop using this name?",
+                f"Your dashboard will stop being served at https://{name}/ and "
+                "go back to this server's IP address, over plain http://.\n\n"
+                "The web server restarts, so anyone using the dashboard is "
+                "disconnected for a moment. The certificate is kept, so using "
+                "the name again later is quick.\n\nContinue?"):
+            return
+
+        def done(outcome: dict) -> None:
+            if "error" in outcome:
+                self.domain_result.set("The name is still in use. The reason is "
+                                       "in the message.")
+                messagebox.showerror("That didn't work", outcome["error"])
+            else:
+                self.domain_result.set("Done. Your dashboard is back on this "
+                                       "server's IP address.")
+                self._https_name = ""
+            self.refresh()
+
+        self._run_domain_job("Switching back to the IP address…",
+                             backend.clear_domain, done)
 
     def _save_report(self) -> None:
         """Write the diagnostic report and show where it went."""
