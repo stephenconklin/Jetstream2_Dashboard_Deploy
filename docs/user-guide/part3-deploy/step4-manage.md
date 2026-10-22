@@ -210,9 +210,14 @@ your instance's IP address (on Cloudflare, set to **DNS only**). See
    It takes a minute or two. The web server restarts, so anyone using the
    dashboard at that moment needs to reload the page.
 
-If it fails, nothing is changed and the message says why. **Stop using this
-name** puts the dashboard back on the IP address over plain `http://`; the
-certificate is kept, so using the name again later is quick.
+If it fails, nothing is changed and the message says why. The full output is
+saved in `~/dashboard-deploy-logs/`. **Stop using this name** puts the
+dashboard back on the IP address over plain `http://`; the certificate is
+kept, so using the name again later is quick.
+
+The application remembers the last name that passed **Check**, so you can
+close it while waiting for a DNS change and pick up where you left off.
+Press **Check** again before using it, because the DNS may have changed.
 
 <figure class="shot shot--todo">
   <div class="shot__box">

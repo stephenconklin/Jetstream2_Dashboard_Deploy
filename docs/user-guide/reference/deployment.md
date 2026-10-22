@@ -149,13 +149,22 @@ How it fits together:
   doesn't spend Let's Encrypt's five-failures-an-hour allowance — and only
   then writes `SERVER_NAME` (and the optional `CERTBOT_EMAIL`) into
   `deploy.env` and re-renders. Any failure stops with everything as it was.
+  On an instance provisioned before this existed, it installs certbot itself
+  first. If the staging service is busy (`503 Service busy`, a real cause on
+  the first Jetstream2 test even though every validator had fetched the
+  challenge), the practice run is retried once after 30 seconds and then
+  skipped, since it's a safeguard, not a prerequisite; a genuine validation
+  failure still stops before production. The desktop app shows bootstrap's
+  error and certbot's diagnostic lines, and saves the full output to
+  `~/dashboard-deploy-logs/https-setup-<time>.log`.
 - **A name set by hand in `deploy.env`** is used on the next bootstrap run;
   until it resolves here and a certificate is obtained, the site stays HTTP.
 - **Renewal** is certbot's own timer, with a deploy hook
   (`/etc/letsencrypt/renewal-hooks/deploy/dashboard-deploy-reload`) that
   reloads nginx so a renewed certificate is used straight away. certbot is
-  installed on every instance, so the app's button needs no package install,
-  but it does nothing without a name.
+  installed on every instance (its install failing is only a warning in a
+  plain provision), so the app's button rarely needs a package install; it
+  does nothing without a name.
 - **Health checks follow the scheme.** Under HTTPS, `manage.sh health` and the
   publish check probe `https://<name>/` on this machine (`curl --resolve
   <name>:443:127.0.0.1`), which also validates the certificate.

@@ -359,6 +359,14 @@ These need a terminal.
       has to stay open even though visitors are sent to HTTPS.
     - **Too many attempts.** Let's Encrypt allows only five failed checks an
       hour for a name. Wait an hour.
+    - **Let's Encrypt was busy.** Messages like `Service busy; retry later`
+      or `Order's status ("invalid") is not acceptable` come from Let's
+      Encrypt's side, not yours. The application already waits and retries
+      once; press the button again a few minutes later.
+
+    The message shows the important lines. The full output is saved in
+    `~/dashboard-deploy-logs/https-setup-<date-time>.log`, named in the
+    message, if you need to send it to someone.
 
 ??? failure "`https://` doesn't load, but `http://` did"
 
@@ -376,6 +384,16 @@ These need a terminal.
 ---
 
 ## Application problems
+
+??? failure "The window is bigger than my screen, or part of a tab is out of reach"
+
+    Every tab scrolls when its content is taller than the window: use the
+    scrollbar on the right, or the mouse wheel. Over a log, the wheel scrolls
+    the log; elsewhere it scrolls the tab. The window can also be made as
+    small as 720×520. If a tab has no scrollbar and its bottom is cut off,
+    the application is older than this: update it with
+    `cd ~/Jetstream2_Dashboard_Deploy && git pull`, then close it and open it
+    again.
 
 ??? failure "The desktop icon does nothing"
 
