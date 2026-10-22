@@ -873,9 +873,14 @@ def _bootstrap_failure(proc: subprocess.CompletedProcess[str], what: str) -> str
         failed = failed[failed.index("FAILED"):]
     failed = "\n".join(failed.splitlines()[:12])
     details: list[str] = []
-    for line in lines:
+    for i, line in enumerate(lines):
         if line.startswith(_CERTBOT_DETAIL_PREFIXES) and line not in details:
             details.append(line)
+            # certbot puts the actual reason on the line after this one
+            # ("An unexpected error occurred:" / "Order's status ... invalid").
+            if line.endswith(":") and i + 1 < len(lines) and lines[i + 1] \
+                    and lines[i + 1] not in details:
+                details.append(lines[i + 1])
     parts = [failed] if failed else []
     if details:
         parts.append("Let's Encrypt / certbot said:\n" + "\n".join(details[:10]))
