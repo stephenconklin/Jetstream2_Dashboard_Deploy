@@ -336,6 +336,16 @@ These need a terminal.
     changed record can take up to an hour to be seen everywhere; press
     **Check** again then. Nothing is set up until Check passes.
 
+    **If it points to addresses like `104.21.x.x` or `172.67.x.x`**, the name
+    is on Cloudflare with its proxy turned on (the orange cloud). Turn it off
+    for that record (**DNS only**, grey cloud), wait a minute, and Check
+    again.
+
+    Keeping Cloudflare's proxy instead is possible, but it's a different
+    setup: Cloudflare then provides the HTTPS, so don't press **Use this name
+    with HTTPS**. With Cloudflare's SSL mode on *Flexible*, it causes an
+    endless redirect loop.
+
 ??? failure "“HTTPS wasn't set up”"
 
     The certificate couldn't be obtained, so nothing was changed and the

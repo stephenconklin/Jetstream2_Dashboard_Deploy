@@ -40,7 +40,7 @@ Drop in a project. It reads your code to work out which of the four frameworks y
 | 🔎 **Checks your code for laptop-only habits** | Paths to your own disk, `setwd()`, file names whose capitals don't match — flagged with file and line before you publish. |
 | 📦 **Handles the dependency mess** | Generates a missing `renv.lock` for you. Detects geospatial R projects and switches to a GDAL-ready base image automatically. |
 | 🗄️ **Small data travels with the app; big data stays put** | A few files next to your code are published with it. A large dataset lives on a storage volume and is attached at run time — so updating it takes a restart, not a rebuild. |
-| 🌐 **Production web server included** | nginx in front, with WebSockets, gzip, rate limiting, a real maintenance page, and TLS when you have a domain name. |
+| 🌐 **Production web server included** | nginx in front, with WebSockets, gzip, rate limiting and a real maintenance page. Point your own domain name at the server and one button gives it free HTTPS, renewed automatically. Without one, nothing changes. |
 | ❤️ **Stays up** | Restarts on crash, and a watchdog catches the harder failure — alive but no longer answering. Survives reboots. |
 | 🖥️ **No terminal required** | A desktop application walks researchers through it step by step, always showing what's live and what's left to do. It's a thin front end over the same scripts, so nothing is hidden. |
 

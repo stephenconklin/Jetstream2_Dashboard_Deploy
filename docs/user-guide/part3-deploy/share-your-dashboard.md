@@ -91,6 +91,15 @@ With one, it takes two steps:
    containing your instance's IP address. Usually your institution's IT
    department adds it for you; if you bought the domain yourself, it's in your
    registrar's DNS settings. A new record can take up to an hour to work.
+
+    !!! warning "Using Cloudflare? Set the record to DNS only"
+
+        Turn the record's orange cloud off (**DNS only**, grey cloud). With
+        Cloudflare's proxy on, the name points at Cloudflare's servers rather
+        than yours — **Check** says it points to addresses like
+        `104.21.x.x` or `172.67.x.x` — and the application can't set up
+        HTTPS for it. The same applies to any other DNS service that proxies
+        traffic.
 2. **In the application, on the Manage tab**, type the name under
    [Web address](step4-manage.md#web-address) and press **Check**. Once it
    says the name points to this server, press **Use this name with HTTPS**.

@@ -166,6 +166,16 @@ How it fits together:
   staging to rehearse, or a local [Pebble](https://github.com/letsencrypt/pebble)
   in testing. `DASHBOARD_PUBLIC_IP` overrides the public-IP lookup the domain
   check compares against, for test machines whose address is private.
+- **Proxying DNS services (Cloudflare's orange cloud) aren't supported for
+  this.** The domain check rejects them, because the name resolves to the
+  proxy's addresses rather than the instance's. That's deliberate, for three
+  reasons. The proxy already gives visitors HTTPS. Combined with Cloudflare's
+  *Flexible* SSL mode, the instance's own HTTP→HTTPS redirect loops forever.
+  And nginx's per-visitor rate and connection limits key on the client
+  address, which behind the proxy is a handful of Cloudflare addresses, so
+  every visitor would share one allowance. Use **DNS only** (grey cloud) for
+  the record. Proper proxy support would need nginx's `real_ip` module
+  trusting the proxy's address ranges.
 - **Ports:** Let's Encrypt validates over **80**, and visitors use **443**.
   Exosphere's default security group was found to allow all inbound traffic,
   so both are usually open already.
