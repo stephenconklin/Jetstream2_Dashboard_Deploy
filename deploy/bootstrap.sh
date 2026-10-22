@@ -291,7 +291,31 @@ obtain_certificate() {
   if [[ -n "$CERTBOT_SERVER" ]]; then
     common+=(--server "$CERTBOT_SERVER")
   else
-    certbot "${common[@]}" --dry-run || return 1
+    # The practice run guards production's failure allowance; it mustn't
+    # become a single point of failure itself. On the first real instance
+    # Let's Encrypt's validators all fetched the challenge (200), then the
+    # staging API answered "503 Service busy; retry later" — staging's
+    # problem, not the instance's. So a busy staging service gets one retry,
+    # and if it's still busy the real request goes ahead without the
+    # rehearsal. A genuine validation failure still stops here.
+    local attempt dry_log
+    dry_log="$(mktemp)"
+    for attempt in 1 2; do
+      if certbot "${common[@]}" --dry-run 2>&1 | tee "$dry_log"; then
+        break
+      fi
+      if ! grep -qE "rateLimited|Service busy|retry later|HTTP/1.1\" 50[0-9]|Service Unavailable" "$dry_log"; then
+        rm -f "$dry_log"
+        return 1
+      fi
+      if [[ "$attempt" -eq 1 ]]; then
+        warn "Let's Encrypt's test service is busy — trying the practice run again in 30 seconds"
+        sleep 30
+      else
+        warn "Let's Encrypt's test service is still busy — going ahead with the real request"
+      fi
+    done
+    rm -f "$dry_log"
   fi
   certbot "${common[@]}"
 }
