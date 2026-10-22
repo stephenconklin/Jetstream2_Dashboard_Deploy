@@ -101,6 +101,9 @@ fi
 step() { printf '\n%s==> %s%s\n' "$C_HEAD" "$*" "$C_OFF"; }
 ok()   { printf '    %sOK%s   %s\n' "$C_OK" "$C_OFF" "$*"; }
 skip() { printf '    ---  %s (already done, skipping)\n' "$*"; }
+# A neutral fact about the run, for a step with nothing to do that isn't
+# "already done" (skip()'s wording would say otherwise).
+note() { printf '    ---  %s\n' "$*"; }
 warn() { printf '    %sWARN%s %s\n' "$C_WARN" "$C_OFF" "$*"; }
 die()  { printf '\n%sFAILED%s %s\n\n' "$C_ERR" "$C_OFF" "$*" >&2; exit 1; }
 
@@ -747,7 +750,7 @@ fi
 # ---------------------------------------------------------------------------
 step "TLS"
 if [[ "$TLS_OK" != "yes" ]]; then
-  skip "no domain name configured — serving http://<this server's IP>/"
+  note "no domain name set — serving http://<this server's IP>/"
 elif [[ "$SITE_MODE" == "https" ]]; then
   ok "serving https://$SERVER_NAME/ (certificate in /etc/letsencrypt/live/$SERVER_NAME/)"
 else
@@ -831,7 +834,7 @@ if [[ "$ENABLE_UFW" == "yes" ]]; then
     warn "CONFIRM SSH ACCESS FROM A SECOND TERMINAL before closing this one."
   fi
 else
-  skip "disabled in deploy.env (opt-in; the desktop's VNC ports are closed below regardless)"
+  note "ufw off (opt-in in deploy.env); the desktop's VNC ports are closed below regardless"
 fi
 
 # ---------------------------------------------------------------------------

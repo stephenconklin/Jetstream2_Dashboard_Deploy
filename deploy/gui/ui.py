@@ -1617,7 +1617,9 @@ class ManageTab(ttk.Frame):
             self.status.set(detail or "Could not work out the current state.")
 
         proxied = health.get("proxy_enabled") == "1"
-        serving = (f"nginx on port 80 → app on {health.get('app_bind', '?')}"
+        https = (health.get("url", "") or "").startswith("https://")
+        serving = (f"nginx on port {'443 (HTTPS; port 80 redirects)' if https else '80'}"
+                   f" → app on {health.get('app_bind', '?')}"
                    if proxied else
                    f"app directly on {health.get('app_bind', '?')} (no web server in front)")
         # HTTP codes as-is: they are the single most useful thing to quote
@@ -1827,6 +1829,10 @@ class ManageTab(ttk.Frame):
                 public_ip=result.get("public_ip", "") or "this server's address"))
             if result.get("domain_ok") == "1":
                 self._checked_domain = result.get("domain", name.lower())
+                if self._checked_domain == self._https_name:
+                    self.domain_result.set(
+                        f"{self._checked_domain} is already this dashboard's "
+                        "address, and still points here correctly.")
 
         self._run_domain_job("Checking…", lambda: backend.check_domain(name), done)
 

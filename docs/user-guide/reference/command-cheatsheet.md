@@ -195,6 +195,9 @@ sudo ./deploy/bootstrap.sh                            # provision the host
 sudo ./deploy/bootstrap.sh /path/to/project           # provision, then deploy
 sudo ./deploy/bootstrap.sh --check                    # read-only status
 sudo ./deploy/bootstrap.sh --remove-proxy             # roll back to direct port-80 binding
+./deploy/lib/domain.sh <name>                         # does a domain name point here? (read-only)
+sudo ./deploy/bootstrap.sh --set-domain <name>        # serve https://<name>/
+sudo ./deploy/bootstrap.sh --clear-domain             # back to http://<IP>/
 ```
 
 ## Host health

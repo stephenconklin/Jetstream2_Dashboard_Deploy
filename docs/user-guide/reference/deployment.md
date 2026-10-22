@@ -10,7 +10,7 @@ The app is reachable on port 80 at the instance's fixed IP. On an instance provi
 
 - Jetstream2 instance running **Ubuntu 22.04 (jammy) or 24.04 (noble)**, launched via Exosphere. Both are tested; the GUI targets Python 3.10 syntax so it runs on either (24.04 ships 3.12).
 - A fixed/floating IP assigned to the instance.
-- Security group allowing inbound **80/tcp** and **22/tcp** — plus **443/tcp** if you plan to use TLS. Don't assume it blocks everything else: an Exosphere desktop instance was found with its VNC port (5901) open to the internet. `bootstrap.sh` closes the VNC ports 5900–5910 to everything but the host itself and Docker, where Guacamole runs, with rules a boot-time unit (`dashboard-deploy-vnc-firewall.service`) re-applies at every boot. Left open, internet bots filled all 100 of TurboVNC's connection slots, so the web desktop stopped connecting, and every one of them was trying the VNC password. `PROTECT_VNC="no"` in `deploy.env` turns this off; `--check` reports it.
+- Security group allowing inbound **80/tcp** and **22/tcp** — plus **443/tcp** for HTTPS under a domain name (Exosphere's default group already allows all three). Don't assume it blocks everything else: an Exosphere desktop instance was found with its VNC port (5901) open to the internet. `bootstrap.sh` closes the VNC ports 5900–5910 to everything but the host itself and Docker, where Guacamole runs, with rules a boot-time unit (`dashboard-deploy-vnc-firewall.service`) re-applies at every boot. Left open, internet bots filled all 100 of TurboVNC's connection slots, so the web desktop stopped connecting, and every one of them was trying the VNC password. `PROTECT_VNC="no"` in `deploy.env` turns this off; `--check` reports it.
 - SSH access as a sudo-capable user (Jetstream2's default `exouser`).
 - Docker preinstalled (Jetstream2's standard Ubuntu image ships with it); `bootstrap.sh` installs it if not. Either way, `bootstrap.sh` adds **BuildKit** (`docker buildx`) when it's missing, which Jetstream2's image leaves out: it installs Ubuntu's `docker-buildx` alongside Ubuntu's `docker.io`, or `docker-buildx-plugin` alongside Docker's own `docker-ce`, since the two families conflict. Without BuildKit, builds fall back to Docker's deprecated legacy builder, which on Docker 29's containerd image store spends about 75 seconds on every Dockerfile step, cached or not — a fully cached republish takes about 7 minutes. `bootstrap.sh --check` reports whether it's installed. Deploying an app needs no `sudo`, assuming `exouser` is in the `docker` group, which is Jetstream2's default — only host provisioning does.
 
@@ -116,16 +116,59 @@ Tune the rest — upload size, rate limit, connection cap, timeout — in `deplo
 
 ### TLS
 
-Let's Encrypt **cannot issue a certificate for a bare IP address**, so TLS needs a DNS name pointed at the instance's floating IP:
+Let's Encrypt **cannot issue a certificate for a bare IP address**, so HTTPS
+needs a DNS name pointed at the instance's floating IP. With no name — the
+default, and the usual Jetstream2 case — bootstrap renders the plain HTTP site
+exactly as it always has, and nothing below applies.
 
-```ini
-SERVER_NAME="dashboard.example.org"
-CERTBOT_EMAIL="you@example.org"
+The usual route is the desktop app's Manage tab (**Web address**), or its
+command-line equivalents:
+
+```bash
+./deploy/lib/domain.sh dashboard.example.org                 # read-only: does it point here?
+sudo ./deploy/bootstrap.sh --set-domain dashboard.example.org [--email you@example.org]
+sudo ./deploy/bootstrap.sh --clear-domain                    # back to http://<IP>/
 ```
 
-With `SERVER_NAME` empty — the default, and the usual Jetstream2 case — bootstrap warns and serves plain HTTP; everything else works. Add the name later and re-run bootstrap; nothing else needs changing.
+How it fits together:
 
-Because bootstrap re-renders the site config from the template on every run, it also **re-installs an existing certificate** into the fresh config rather than skipping it. Without that, a second bootstrap run would silently drop the instance back to plain HTTP while reporting success.
+- **The template owns the HTTPS config; certbot only obtains certificates.**
+  With a certificate for `SERVER_NAME` on disk, bootstrap renders the same
+  server block on `listen 443 ssl` with `/etc/nginx/snippets/dashboard-tls.conf`
+  (TLS 1.2/1.3, no HSTS yet), plus a port-80 server that keeps
+  `/_deploy/health` and redirects everything else to `https://<name>/`. Without
+  one, the HTTP site is byte-identical to before. certbot runs only as
+  `certonly --nginx` — it answers Let's Encrypt's challenge through nginx for a
+  few seconds and never edits the site — so re-running bootstrap reproduces
+  HTTPS exactly. (Earlier versions let certbot's installer edit the rendered
+  site, which every re-render wiped, and needed a re-install step that could
+  silently drop an instance back to HTTP.)
+- **`--set-domain` changes nothing until it has a certificate.** It checks the
+  name resolves to this instance's public IP (`lib/domain.sh`), gets the
+  certificate — a staging dry run first against production, so a bad name
+  doesn't spend Let's Encrypt's five-failures-an-hour allowance — and only
+  then writes `SERVER_NAME` (and the optional `CERTBOT_EMAIL`) into
+  `deploy.env` and re-renders. Any failure stops with everything as it was.
+- **A name set by hand in `deploy.env`** is used on the next bootstrap run;
+  until it resolves here and a certificate is obtained, the site stays HTTP.
+- **Renewal** is certbot's own timer, with a deploy hook
+  (`/etc/letsencrypt/renewal-hooks/deploy/dashboard-deploy-reload`) that
+  reloads nginx so a renewed certificate is used straight away. certbot is
+  installed on every instance, so the app's button needs no package install,
+  but it does nothing without a name.
+- **Health checks follow the scheme.** Under HTTPS, `manage.sh health` and the
+  publish check probe `https://<name>/` on this machine (`curl --resolve
+  <name>:443:127.0.0.1`), which also validates the certificate.
+  `/_deploy/health` stays on plain HTTP in both modes.
+- **The email is optional.** Let's Encrypt no longer sends expiry reminders,
+  and renewal is automatic.
+- `CERTBOT_SERVER` in `deploy.env` selects the ACME server — Let's Encrypt
+  staging to rehearse, or a local [Pebble](https://github.com/letsencrypt/pebble)
+  in testing. `DASHBOARD_PUBLIC_IP` overrides the public-IP lookup the domain
+  check compares against, for test machines whose address is private.
+- **Ports:** Let's Encrypt validates over **80**, and visitors use **443**.
+  Exosphere's default security group was found to allow all inbound traffic,
+  so both are usually open already.
 
 ---
 
